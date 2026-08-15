@@ -1,0 +1,15 @@
+site_name: QES
+site_description: Governed possibility-space computation framework
+
+nav:
+  - Home: index.md
+  - API Reference: api-reference.md
+  - Tutorials: tutorials.md
+  - Examples: examples-index.md
+  - Architecture Overview: architecture-overview.md
+  - Deployment Patterns: deployment-patterns.md
+  - Kubernetes Deployment: kubernetes-deployment.md
+  - Formal Architecture: QES-architecture.md
+
+theme:
+  name: mkdocs

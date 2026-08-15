@@ -1,0 +1,276 @@
+"""QESSpace — the top-level engine (docs/QES-architecture.md, sections 1, 30-32).
+
+    Q(t) = { (R_i(t), p_i(t)) },  i = 1..N(t)
+
+QES master operator:
+
+    Q_{t+dt} = C o S o P o D o E o G (Q_t, Y_{t+dt})
+
+    Generate -> Execute -> Measure Divergence -> Check Permission
+             -> Select Survivors -> Converge -> Regenerate
+
+This module wires together the room population, divergence tracking (DSA),
+the Genesis permission kernel, and the convergence metric into a single
+step()/run() loop. It intentionally keeps the room-level dynamics/selection
+pluggable: callers supply how rooms evolve, are scored, and how many children
+survive, while QESSpace enforces the overall generate/execute/measure/permit/
+select/converge cycle and bookkeeping (weights, lifecycle, entropy).
+"""
+from __future__ import annotations
+
+import copy
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+
+import numpy as np
+
+from qes.convergence import convergence_coefficient, qes_entropy
+from qes.divergence import DSA
+from qes.domain import DomainNullification
+from qes.orchestrator import RoomLifecycle
+from qes.permission import GenesisPermission
+from qes.room import Room
+
+# A step function evolves a room's state one tick forward: (room, t, dt) -> new_x
+StepFn = Callable[[Room, float, float], np.ndarray]
+
+
+@dataclass
+class SpaceTelemetry:
+    """Snapshot of Q(t) used for the "living universe" view (doc section 19)."""
+
+    time: float
+    active: int
+    collapsed: int
+    total_generated: int
+    entropy: float
+    convergence: float
+    dominant_room_id: str | None
+    dominant_permission: float
+
+
+class QESSpace:
+    """Q(t): the governed possibility space of competing rooms."""
+
+    def __init__(
+        self,
+        permission_gate: GenesisPermission,
+        domain: DomainNullification | None = None,
+        step_fn: StepFn | None = None,
+        dt: float = 1.0,
+        max_workers: int | None = None,
+    ):
+        self.permission_gate = permission_gate
+        self.domain = domain
+        self.step_fn = step_fn
+        self.dt = dt
+        # Rooms are independent, so the execute() tick can optionally fan
+        # them out across a thread pool. max_workers=None (default) runs
+        # rooms sequentially in a plain for-loop; max_workers>1 parallelizes
+        # step_fn evaluation across rooms (useful when step_fn does
+        # non-trivial numeric work, e.g. calling out to a solver).
+        self.max_workers = max_workers
+
+        self.rooms: dict = {}  # id -> Room
+        self._dsa: dict = {}  # id -> DSA tracker
+        self.time: float = 0.0
+        self.total_generated: int = 0
+        self.total_collapsed: int = 0
+        self.history: list = []
+
+    # ------------------------------------------------------------------
+    # Generation (G)
+    # ------------------------------------------------------------------
+    def add_room(self, room: Room) -> None:
+        room.state = "Active" if room.state == "Seed" else room.state
+        self.rooms[room.id] = room
+        self._dsa[room.id] = DSA()
+        self.total_generated += 1
+
+    def spawn(self, rooms: Sequence[Room]) -> None:
+        for room in rooms:
+            self.add_room(room)
+
+    # ------------------------------------------------------------------
+    # Execution (E)
+    # ------------------------------------------------------------------
+    def _default_step(self, room: Room, t: float, dt: float) -> np.ndarray:
+        # Identity dynamics if the caller doesn't supply a step function:
+        # the state stays put unless explicitly evolved.
+        return room.x
+
+    def execute(self) -> None:
+        """Advance every active room's state one tick (E).
+
+        Rooms are independent, isolated realities, so this can be executed
+        either sequentially or in parallel across a thread pool (set
+        ``max_workers`` on the constructor to enable parallel execution).
+        """
+        step = self.step_fn or self._default_step
+        active = self.active_rooms()
+        if self.max_workers and self.max_workers > 1 and len(active) > 1:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                new_states = list(
+                    pool.map(lambda room: step(room, self.time, self.dt), active)
+                )
+            for room, new_state in zip(active, new_states, strict=True):
+                room.x = np.asarray(new_state, dtype=float)
+        else:
+            for room in active:
+                room.x = np.asarray(step(room, self.time, self.dt), dtype=float)
+
+    # ------------------------------------------------------------------
+    # Divergence measurement (D)
+    # ------------------------------------------------------------------
+    def measure_divergence(self) -> dict:
+        """Update DSA/DR/HSA for every active room. Returns id -> DivergenceResult."""
+        results = {}
+        for room in self.active_rooms():
+            dsa = self._dsa[room.id]
+            w = (
+                self.domain.metric(room.activation)
+                if self.domain is not None
+                else np.eye(room.dim)
+            )
+            result = dsa.update(room.x, room.x_star, self.dt, w)
+            room.memory["divergence"] = result
+            results[room.id] = result
+        return results
+
+    # ------------------------------------------------------------------
+    # Permission check (P)
+    # ------------------------------------------------------------------
+    def check_permission(self) -> dict:
+        """Evaluate the Genesis permission kernel for every active room."""
+        results = {}
+        for room in self.active_rooms():
+            cci_weights = room.gates.get("cci_weights")  # optional per-room override
+            result = self.permission_gate.evaluate(
+                room.x, room.lower, room.upper, cci_weights, room.couplings
+            )
+            room.memory["permission"] = result
+            room.weight = result.soft_permission
+            results[room.id] = result
+            if not result.admitted:
+                RoomLifecycle.transition(room, "Collapsed")
+                self.total_collapsed += 1
+        return results
+
+    # ------------------------------------------------------------------
+    # Selection (S)
+    # ------------------------------------------------------------------
+    def select(self, survivors_per_kind: int | None = None,
+               signature_fn: Callable[[Room], object] | None = None) -> None:
+        """Prune surviving rooms; optionally keep only the top-N per signature kind."""
+        active = self.active_rooms()
+        if not active:
+            return
+        if signature_fn is not None and survivors_per_kind is not None:
+            groups: dict = {}
+            for room in active:
+                groups.setdefault(signature_fn(room), []).append(room)
+            for members in groups.values():
+                ranked = sorted(members, key=lambda r: r.weight, reverse=True)
+                for loser in ranked[survivors_per_kind:]:
+                    RoomLifecycle.transition(loser, "Shadow")
+
+    # ------------------------------------------------------------------
+    # Convergence (C)
+    # ------------------------------------------------------------------
+    def convergence(self) -> float:
+        weights = [r.weight for r in self.active_rooms()]
+        if not weights:
+            return 0.0
+        return convergence_coefficient(weights)
+
+    def entropy(self) -> float:
+        weights = [r.weight for r in self.active_rooms()]
+        return qes_entropy(weights) if weights else 0.0
+
+    # ------------------------------------------------------------------
+    # Master operator: Q_{t+dt} = C o S o P o D o E o G (Q_t, Y_{t+dt})
+    # ------------------------------------------------------------------
+    def step(self) -> SpaceTelemetry:
+        """Advance the whole space by one tick through E -> D -> P -> S -> C."""
+        self.execute()
+        self.measure_divergence()
+        self.check_permission()
+        self.select()
+        self.time += self.dt
+        telemetry = self.telemetry()
+        self.history.append(telemetry)
+        return telemetry
+
+    def run(self, steps: int) -> list:
+        return [self.step() for _ in range(steps)]
+
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
+    def active_rooms(self) -> list:
+        return [r for r in self.rooms.values() if r.state == "Active"]
+
+    def collapsed_rooms(self) -> list:
+        return [r for r in self.rooms.values() if r.state == "Collapsed"]
+
+    def dominant_room(self) -> Room | None:
+        active = self.active_rooms()
+        if not active:
+            return None
+        return max(active, key=lambda r: r.weight)
+
+    def telemetry(self) -> SpaceTelemetry:
+        active = self.active_rooms()
+        dominant = self.dominant_room()
+        return SpaceTelemetry(
+            time=self.time,
+            active=len(active),
+            collapsed=len(self.collapsed_rooms()),
+            total_generated=self.total_generated,
+            entropy=self.entropy(),
+            convergence=self.convergence(),
+            dominant_room_id=dominant.id if dominant else None,
+            dominant_permission=dominant.weight if dominant else 0.0,
+        )
+
+    # ------------------------------------------------------------------
+    # Reality branching at the space level: clone/snapshot/restore
+    # ------------------------------------------------------------------
+    def clone(self) -> QESSpace:
+        """Deep-copy this whole space (rooms, DSA trackers, history) so it can
+        diverge independently -- reality branching promoted to the space level."""
+        clone = QESSpace(
+            permission_gate=self.permission_gate,
+            domain=self.domain,
+            step_fn=self.step_fn,
+            dt=self.dt,
+            max_workers=self.max_workers,
+        )
+        clone.rooms = copy.deepcopy(self.rooms)
+        clone._dsa = copy.deepcopy(self._dsa)
+        clone.time = self.time
+        clone.total_generated = self.total_generated
+        clone.total_collapsed = self.total_collapsed
+        clone.history = list(self.history)
+        return clone
+
+    def snapshot(self) -> dict:
+        """Capture a restorable checkpoint of this space's full mutable state."""
+        return {
+            "rooms": copy.deepcopy(self.rooms),
+            "dsa": copy.deepcopy(self._dsa),
+            "time": self.time,
+            "total_generated": self.total_generated,
+            "total_collapsed": self.total_collapsed,
+            "history": list(self.history),
+        }
+
+    def restore(self, snapshot: dict) -> None:
+        """Restore state previously captured by `snapshot()`."""
+        self.rooms = copy.deepcopy(snapshot["rooms"])
+        self._dsa = copy.deepcopy(snapshot["dsa"])
+        self.time = snapshot["time"]
+        self.total_generated = snapshot["total_generated"]
+        self.total_collapsed = snapshot["total_collapsed"]
+        self.history = list(snapshot["history"])
