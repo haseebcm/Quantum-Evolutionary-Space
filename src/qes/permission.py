@@ -124,24 +124,34 @@ class GenesisPermission:
         w: np.ndarray | None = None,
         coupling: np.ndarray | None = None,
     ) -> PermissionResult:
-        """Evaluate the full permission kernel.
+        """Evaluate the full permission kernel."""
+        x_arr = np.asarray(x, dtype=float)
+        l_arr = np.asarray(lower, dtype=float)
+        u_arr = np.asarray(upper, dtype=float)
 
-        Args:
-            x, lower, upper: current state and its allowed envelope.
-            w: per-component exceedance weight vector used by CCI's w^T*e term
-                (defaults to a vector of ones). This is distinct from the
-                domain-nullified DR metric W(a), which is an n x n matrix
-                used elsewhere (see divergence.DSA).
-            coupling: coupling structure A used by CCI's ||A*e||^2 term.
-        """
-        phi = violation_energy(x, lower, upper)
-        e = exceedance(x, lower, upper)
-        if w is None:
-            w = np.ones_like(e)
-        cci = cascade_collapse_index(e, w, coupling, self.gamma)
-        margin = permission_margin(x, lower, upper, cci)
-        hard = phi == 0.0 and cci < self.theta
-        soft = soft_permission(phi, cci, self.theta, self.alpha, self.beta)
+        over = np.maximum(0.0, x_arr - u_arr)
+        under = np.maximum(0.0, l_arr - x_arr)
+        phi = float(np.sum(over ** 2 + under ** 2))
+
+        e = over + under
+        if coupling is None:
+            base = float(np.sum(e)) if w is None else float(np.dot(np.asarray(w, dtype=float), e))
+            cci = base
+        else:
+            w_val = np.ones_like(e) if w is None else np.asarray(w, dtype=float)
+            base = float(np.dot(w_val, e))
+            coupled = coupling @ e
+            cci = base + self.gamma * float(np.dot(coupled, coupled))
+
+        span = u_arr - l_arr
+        span = np.where(span == 0, np.finfo(float).eps, span)
+        lower_margin = (x_arr - l_arr) / span
+        upper_margin = (u_arr - x_arr) / span
+        margin_min = float(np.min(np.minimum(lower_margin, upper_margin)))
+        margin = margin_min / (1.0 + cci)
+
+        hard = (phi == 0.0) and (cci < self.theta)
+        soft = float(np.exp(-self.alpha * phi) * np.exp(-self.beta * max(0.0, cci - self.theta)))
         admitted = (
             phi <= self.eps_phi
             and cci < self.theta

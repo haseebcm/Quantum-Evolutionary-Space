@@ -82,10 +82,10 @@ class EquationForge:
     def mutate(self, equation: Equation, scale: float = 1.0) -> Equation:
         """E_j' = M_E(E_j, dtheta, dD, dC): perturb numeric parameters, retain lineage."""
         mutated_theta = {}
+        std = self.mutation_rate * scale
         for key, value in equation.theta.items():
-            if isinstance(value, (int, float)):
-                noise = self.rng.normal(0.0, self.mutation_rate * scale)
-                mutated_theta[key] = value + noise
+            if (type(value) is float or type(value) is int) and not isinstance(value, bool):
+                mutated_theta[key] = value + float(self.rng.normal(0.0, std))
             else:
                 mutated_theta[key] = value
         return Equation(
@@ -101,26 +101,17 @@ class EquationForge:
         return [self.mutate(base) for _ in range(size)]
 
     def crossover(self, parent_a: Equation, parent_b: Equation) -> Equation:
-        """Recombine two equations' numeric parameters into one child.
-
-        For each shared numeric key in theta, the child's value is drawn
-        uniformly between the two parents' values (a form of genetic
-        recombination/BLX crossover); non-numeric or non-shared keys are
-        inherited from `parent_a`. This complements `mutate()` (asexual
-        perturbation) with sexual recombination across two lineages, and
-        tracks both parents via `Equation.parent` (dominant lineage) plus
-        `theta["_co_parent"]` (the secondary parent's id).
-        """
+        """Recombine two equations' numeric parameters into one child."""
         child_theta: dict = dict(parent_a.theta)
         for key, value_a in parent_a.theta.items():
             value_b = parent_b.theta.get(key)
             if (
-                isinstance(value_a, (int, float))
+                (type(value_a) is float or type(value_a) is int)
                 and not isinstance(value_a, bool)
-                and isinstance(value_b, (int, float))
+                and (type(value_b) is float or type(value_b) is int)
                 and not isinstance(value_b, bool)
             ):
-                weight = self.rng.uniform(0.0, 1.0)
+                weight = float(self.rng.uniform(0.0, 1.0))
                 child_theta[key] = weight * value_a + (1.0 - weight) * value_b
         child_theta["_co_parent"] = parent_b.id
         return Equation(
@@ -134,24 +125,20 @@ class EquationForge:
     def spawn_next_generation(
         self, population: list, size: int, elite_fraction: float = 0.2
     ) -> list:
-        """Produce the next generation from a fitness-scored `population`.
-
-        The top `elite_fraction` of `population` (by fitness) survive
-        unchanged (elitism); the remaining slots up to `size` are filled by
-        crossing over pairs sampled from the elite pool and mutating the
-        result, giving a full generational replacement step that combines
-        elitism, crossover, and mutation in one call.
-        """
+        """Produce the next generation from a fitness-scored `population`."""
         if not population:
             return []
         ranked = sorted(population, key=lambda e: e.fitness, reverse=True)
         elite_count = max(1, int(round(len(ranked) * elite_fraction)))
         elite = ranked[:elite_count]
         next_gen = list(elite[: min(size, len(elite))])
-        while len(next_gen) < size:
-            a, b = self.rng.choice(len(elite), size=2, replace=True)
-            child = self.crossover(elite[a], elite[b])
-            next_gen.append(self.mutate(child, scale=0.5))
+        needed = size - len(next_gen)
+        if needed > 0:
+            n_elite = len(elite)
+            pairs = self.rng.choice(n_elite, size=(needed, 2), replace=True)
+            for a, b in pairs:
+                child = self.crossover(elite[a], elite[b])
+                next_gen.append(self.mutate(child, scale=0.5))
         return next_gen[:size]
 
     def suppress(self, population: list, min_fitness: float) -> list:

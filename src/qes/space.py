@@ -65,15 +65,11 @@ class QESSpace:
         self.domain = domain
         self.step_fn = step_fn
         self.dt = dt
-        # Rooms are independent, so the execute() tick can optionally fan
-        # them out across a thread pool. max_workers=None (default) runs
-        # rooms sequentially in a plain for-loop; max_workers>1 parallelizes
-        # step_fn evaluation across rooms (useful when step_fn does
-        # non-trivial numeric work, e.g. calling out to a solver).
         self.max_workers = max_workers
 
         self.rooms: dict = {}  # id -> Room
         self._dsa: dict = {}  # id -> DSA tracker
+        self._active_cache: list | None = None
         self.time: float = 0.0
         self.total_generated: int = 0
         self.total_collapsed: int = 0
@@ -87,6 +83,7 @@ class QESSpace:
         self.rooms[room.id] = room
         self._dsa[room.id] = DSA()
         self.total_generated += 1
+        self._active_cache = None
 
     def spawn(self, rooms: Sequence[Room]) -> None:
         for room in rooms:
@@ -96,17 +93,10 @@ class QESSpace:
     # Execution (E)
     # ------------------------------------------------------------------
     def _default_step(self, room: Room, t: float, dt: float) -> np.ndarray:
-        # Identity dynamics if the caller doesn't supply a step function:
-        # the state stays put unless explicitly evolved.
         return room.x
 
     def execute(self) -> None:
-        """Advance every active room's state one tick (E).
-
-        Rooms are independent, isolated realities, so this can be executed
-        either sequentially or in parallel across a thread pool (set
-        ``max_workers`` on the constructor to enable parallel execution).
-        """
+        """Advance every active room's state one tick (E)."""
         step = self.step_fn or self._default_step
         active = self.active_rooms()
         if self.max_workers and self.max_workers > 1 and len(active) > 1:
@@ -126,13 +116,10 @@ class QESSpace:
     def measure_divergence(self) -> dict:
         """Update DSA/DR/HSA for every active room. Returns id -> DivergenceResult."""
         results = {}
+        domain = self.domain
         for room in self.active_rooms():
             dsa = self._dsa[room.id]
-            w = (
-                self.domain.metric(room.activation)
-                if self.domain is not None
-                else np.eye(room.dim)
-            )
+            w = domain.metric(room.activation) if domain is not None else None
             result = dsa.update(room.x, room.x_star, self.dt, w)
             room.memory["divergence"] = result
             results[room.id] = result
@@ -144,9 +131,12 @@ class QESSpace:
     def check_permission(self) -> dict:
         """Evaluate the Genesis permission kernel for every active room."""
         results = {}
-        for room in self.active_rooms():
-            cci_weights = room.gates.get("cci_weights")  # optional per-room override
-            result = self.permission_gate.evaluate(
+        active = self.active_rooms()
+        collapsed_any = False
+        eval_fn = self.permission_gate.evaluate
+        for room in active:
+            cci_weights = room.gates.get("cci_weights")
+            result = eval_fn(
                 room.x, room.lower, room.upper, cci_weights, room.couplings
             )
             room.memory["permission"] = result
@@ -155,6 +145,9 @@ class QESSpace:
             if not result.admitted:
                 RoomLifecycle.transition(room, "Collapsed")
                 self.total_collapsed += 1
+                collapsed_any = True
+        if collapsed_any:
+            self._active_cache = None
         return results
 
     # ------------------------------------------------------------------
@@ -170,10 +163,14 @@ class QESSpace:
             groups: dict = {}
             for room in active:
                 groups.setdefault(signature_fn(room), []).append(room)
+            shadow_any = False
             for members in groups.values():
                 ranked = sorted(members, key=lambda r: r.weight, reverse=True)
                 for loser in ranked[survivors_per_kind:]:
                     RoomLifecycle.transition(loser, "Shadow")
+                    shadow_any = True
+            if shadow_any:
+                self._active_cache = None
 
     # ------------------------------------------------------------------
     # Convergence (C)
@@ -209,7 +206,9 @@ class QESSpace:
     # Introspection
     # ------------------------------------------------------------------
     def active_rooms(self) -> list:
-        return [r for r in self.rooms.values() if r.state == "Active"]
+        if self._active_cache is None:
+            self._active_cache = [r for r in self.rooms.values() if r.state == "Active"]
+        return self._active_cache
 
     def collapsed_rooms(self) -> list:
         return [r for r in self.rooms.values() if r.state == "Collapsed"]
@@ -222,16 +221,29 @@ class QESSpace:
 
     def telemetry(self) -> SpaceTelemetry:
         active = self.active_rooms()
-        dominant = self.dominant_room()
+        n_active = len(active)
+        if n_active > 0:
+            dominant = max(active, key=lambda r: r.weight)
+            weights = [r.weight for r in active]
+            ent = qes_entropy(weights)
+            conv = convergence_coefficient(weights)
+            dom_id = dominant.id
+            dom_perm = dominant.weight
+        else:
+            ent = 0.0
+            conv = 0.0
+            dom_id = None
+            dom_perm = 0.0
+
         return SpaceTelemetry(
             time=self.time,
-            active=len(active),
-            collapsed=len(self.collapsed_rooms()),
+            active=n_active,
+            collapsed=self.total_collapsed,
             total_generated=self.total_generated,
-            entropy=self.entropy(),
-            convergence=self.convergence(),
-            dominant_room_id=dominant.id if dominant else None,
-            dominant_permission=dominant.weight if dominant else 0.0,
+            entropy=ent,
+            convergence=conv,
+            dominant_room_id=dom_id,
+            dominant_permission=dom_perm,
         )
 
     # ------------------------------------------------------------------

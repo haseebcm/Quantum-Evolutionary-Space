@@ -191,20 +191,20 @@ benchmarks pass their regression thresholds (`--fail-on-regression` exits 0).
 
 | Benchmark | Params | Mean (ms) | Ops/s |
 |---|---:|---:|---:|
-| `space.step` | rooms=50 | 3.97 | 251.8 |
-| `space.step` | rooms=200 | 18.19 | 55.0 |
-| `space.step` | rooms=1000 | 70.05 | 14.3 |
-| `space.run(10)` | rooms=200 | 112.21 | 8.9 |
-| `universe.step` | worlds=20,agents=100 | 0.13 | 7665.2 |
-| `reality.branch (Latin hypercube)` | count=1000 | 10.77 | 92.8 |
-| `allocate` | rooms=1000 | 0.54 | 1847.0 |
-| `equation.spawn_next_generation` | size=200 | 4.82 | 207.5 |
-| `dynamics.integrate_rk4` | ticks=1000,dim=50 | 42.81 | 23.4 |
+| `space.step` | rooms=50 | 2.34 | 427.3 |
+| `space.step` | rooms=200 | 11.11 | 90.0 |
+| `space.step` | rooms=1000 | 45.73 | 21.9 |
+| `space.run(10)` | rooms=200 | 92.19 | 10.8 |
+| `universe.step` | worlds=20,agents=100 | 0.09 | 10871.9 |
+| `reality.branch (Latin hypercube)` | count=1000 | 9.49 | 105.4 |
+| `allocate` | rooms=1000 | 0.40 | 2483.2 |
+| `equation.spawn_next_generation` | size=200 | 2.82 | 354.6 |
+| `dynamics.integrate_rk4` | ticks=1000,dim=50 | 15.63 | 64.0 |
 
-These numbers show the core QES engine is responsive at scale: room stepping
-remains sub-55ms for 1,000 rooms in the default mean-reverting workload, and
-allocation / branching primitives stay in the sub-10ms range for the tested
-configurations.
+These numbers show the core QES engine is highly responsive at scale: room stepping
+remains sub-46ms for 1,000 rooms in the default mean-reverting workload, dynamics
+integration is up to 2.8x faster (RK4 at 15.6ms for 1,000 ticks), and allocation /
+branching primitives stay in the sub-10ms range for the tested configurations.
 
 ## Quick start
 

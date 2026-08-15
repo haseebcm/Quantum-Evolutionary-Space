@@ -59,11 +59,13 @@ class RoomDynamics:
         self, x: np.ndarray, u: np.ndarray | None = None, t: float = 0.0
     ) -> np.ndarray:
         """xdot_i = f_i(x_i, t) + B_i * u_i."""
-        n = x.shape[0]
-        u = np.zeros(n) if u is None else np.asarray(u, dtype=float)
-        drift = self.drift(x, t) if self.drift is not None else np.zeros(n)
-        b = self.control_matrix if self.control_matrix is not None else np.eye(n)
-        return drift + b @ u
+        drift = self.drift(x, t) if self.drift is not None else np.zeros(x.shape[0], dtype=float)
+        if u is None:
+            return drift
+        u_arr = np.asarray(u, dtype=float)
+        if self.control_matrix is None:
+            return drift + u_arr
+        return drift + self.control_matrix @ u_arr
 
     def integrate(
         self, x: np.ndarray, u: np.ndarray | None, t: float, dt: float
@@ -74,19 +76,13 @@ class RoomDynamics:
     def integrate_rk4(
         self, x: np.ndarray, u: np.ndarray | None, t: float, dt: float
     ) -> np.ndarray:
-        """Classical 4th-order Runge-Kutta integration of xdot = f(x,t) + B*u.
-
-        Higher-order alternative to `integrate()` (forward Euler): RK4's
-        local truncation error is O(dt^5) vs. Euler's O(dt^2), so rooms with
-        fast/stiff dynamics stay numerically stable at much larger step
-        sizes `dt`, at the cost of four `step_continuous` evaluations per
-        tick instead of one.
-        """
+        """Classical 4th-order Runge-Kutta integration of xdot = f(x,t) + B*u."""
+        dt_half = 0.5 * dt
         k1 = self.step_continuous(x, u, t)
-        k2 = self.step_continuous(x + 0.5 * dt * k1, u, t + 0.5 * dt)
-        k3 = self.step_continuous(x + 0.5 * dt * k2, u, t + 0.5 * dt)
+        k2 = self.step_continuous(x + dt_half * k1, u, t + dt_half)
+        k3 = self.step_continuous(x + dt_half * k2, u, t + dt_half)
         k4 = self.step_continuous(x + dt * k3, u, t + dt)
-        return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        return x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
     @staticmethod
     def stochastic_noise(
@@ -94,10 +90,12 @@ class RoomDynamics:
         sigma: float | np.ndarray = 1.0,
         rng: np.random.Generator | None = None,
     ) -> np.ndarray:
-        """Draw a Gaussian disturbance xi ~ N(0, sigma^2 I) for the `xi` term of
-        `step_discrete`, modelling process noise / stochastic dynamics."""
+        """Draw a Gaussian disturbance xi ~ N(0, sigma^2 I)."""
         rng = rng or np.random.default_rng()
-        return rng.normal(0.0, 1.0, size=dim) * np.asarray(sigma, dtype=float)
+        noise = rng.normal(0.0, 1.0, size=dim)
+        if isinstance(sigma, (int, float)):
+            return noise * float(sigma)
+        return noise * np.asarray(sigma, dtype=float)
 
     def step_stochastic(
         self,
@@ -108,10 +106,7 @@ class RoomDynamics:
         u: np.ndarray | None = None,
         rng: np.random.Generator | None = None,
     ) -> np.ndarray:
-        """RK4-integrate the deterministic drift, then add a stochastic
-        disturbance scaled by sqrt(dt) (Euler-Maruyama noise scaling) --
-        combines a high-order deterministic integrator with process noise
-        in one call."""
+        """RK4-integrate deterministic drift, then add stochastic noise."""
         deterministic = self.integrate_rk4(x, u, t, dt)
         noise = self.stochastic_noise(x.shape[0], sigma, rng) * np.sqrt(dt)
         return deterministic + noise

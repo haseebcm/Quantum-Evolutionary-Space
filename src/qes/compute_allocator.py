@@ -54,10 +54,28 @@ class ComputeAllocator:
         self, profiles: Sequence[RoomComputeProfile], total: float
     ) -> np.ndarray:
         """rho_i = total * Priority_i / sum_j Priority_j."""
-        priorities = np.array([self.priority(p) for p in profiles], dtype=float)
-        denom = priorities.sum()
+        n = len(profiles)
+        if n == 0:
+            return np.zeros(0, dtype=float)
+
+        eps = self.epsilon
+        alpha, beta, gamma, delta = self.alpha, self.beta, self.gamma, self.delta
+
+        pi_arr = np.fromiter((p.permission for p in profiles), dtype=float, count=n)
+        u_arr = np.fromiter((p.uncertainty for p in profiles), dtype=float, count=n)
+        r_arr = np.fromiter((p.risk for p in profiles), dtype=float, count=n)
+        v_arr = np.fromiter((p.value for p in profiles), dtype=float, count=n)
+
+        term1 = pi_arr + eps if alpha == 1.0 else (pi_arr + eps) ** alpha
+        term2 = u_arr + eps if beta == 1.0 else (u_arr + eps) ** beta
+        term3 = 1.0 + r_arr if gamma == 1.0 else (1.0 + r_arr) ** gamma
+        v_clamped = np.maximum(v_arr, eps)
+        term4 = v_clamped if delta == 1.0 else v_clamped ** delta
+
+        priorities = term1 * term2 * term3 * term4
+        denom = float(priorities.sum())
         if denom <= 0:
-            return np.zeros_like(priorities)
+            return np.zeros(n, dtype=float)
         return total * priorities / denom
 
     @staticmethod

@@ -104,11 +104,20 @@ class DSA:
         else:
             dr_vec = d
 
-        w = np.asarray(w, dtype=float)
-        if w.ndim == 1:
-            dr = float(np.sum(w * dr_vec ** 2))
+        if w is None:
+            dr = float(np.dot(dr_vec, dr_vec))
         else:
-            dr = float(dr_vec @ w @ dr_vec)
+            w_arr = np.asarray(w, dtype=float)
+            if w_arr.ndim == 1:
+                dr = float(np.sum(w_arr * dr_vec ** 2))
+            elif w_arr.ndim == 2:
+                # Check if 2D matrix is diagonal or identity
+                if w_arr.shape[0] == w_arr.shape[1] and np.array_equal(w_arr, np.eye(w_arr.shape[0])):
+                    dr = float(np.dot(dr_vec, dr_vec))
+                else:
+                    dr = float(dr_vec @ w_arr @ dr_vec)
+            else:
+                dr = float(dr_vec @ w_arr @ dr_vec)
 
         if self._prev_d is None:
             d_dot = np.zeros_like(d)

@@ -45,56 +45,43 @@ class RealityGenerator:
         activations: Sequence[np.ndarray] | None = None,
         perturb_fn: Callable[[Room], np.ndarray] | None = None,
     ) -> list:
-        """B(R_i) = { R_i1, ..., R_im }.
-
-        Args:
-            room: parent room R_i.
-            count: number of children m to generate.
-            scale: perturbation scale used by the default perturb function.
-            equations: optional list of equation populations E_ij, one per child
-                (cycled if shorter than count).
-            activations: optional list of domain activation vectors a_ij, one per
-                child (cycled if shorter than count).
-            perturb_fn: optional custom zeta_ij generator, called as fn(room).
-        """
+        """B(R_i) = { R_i1, ..., R_im }."""
         children = []
-        for j in range(count):
-            zeta = (
-                perturb_fn(room)
-                if perturb_fn is not None
-                else self.perturb(room, scale)
-            )
-            overrides: dict = {"x": room.x + zeta}
-            if equations:
-                overrides["equations"] = list(equations[j % len(equations)])
-            if activations:
-                overrides["activation"] = np.asarray(activations[j % len(activations)])
-            child = room.clone(**overrides)
-            child.state = "Active"
-            children.append(child)
+        if perturb_fn is None:
+            zetas = self.rng.normal(0.0, scale, size=(count, room.dim))
+            for j in range(count):
+                ov: dict = {"x": room.x + zetas[j]}
+                if equations:
+                    ov["equations"] = list(equations[j % len(equations)])
+                if activations:
+                    ov["activation"] = np.asarray(activations[j % len(activations)])
+                child = room.clone(**ov)
+                child.state = "Active"
+                children.append(child)
+        else:
+            for j in range(count):
+                zeta = perturb_fn(room)
+                ov = {"x": room.x + zeta}
+                if equations:
+                    ov["equations"] = list(equations[j % len(equations)])
+                if activations:
+                    ov["activation"] = np.asarray(activations[j % len(activations)])
+                child = room.clone(**ov)
+                child.state = "Active"
+                children.append(child)
         return children
 
     def latin_hypercube_samples(
         self, dim: int, count: int, lower: np.ndarray, upper: np.ndarray
     ) -> np.ndarray:
-        """Stratified Latin Hypercube samples of shape (count, dim) within [lower, upper].
-
-        Each of the `dim` axes is split into `count` equal strata; one
-        sample is drawn uniformly within a random stratum per axis, and the
-        stratum-to-sample assignment is independently shuffled per axis, so
-        every stratum on every axis is populated exactly once -- unlike
-        i.i.d. sampling, which can leave gaps for small `count`.
-        """
+        """Stratified Latin Hypercube samples of shape (count, dim) within [lower, upper]."""
         lower = np.asarray(lower, dtype=float)
         upper = np.asarray(upper, dtype=float)
-        samples = np.empty((count, dim), dtype=float)
-        strata_edges = np.linspace(0.0, 1.0, count + 1)
+        offsets = self.rng.uniform(0.0, 1.0, size=(count, dim))
+        strata = (np.arange(count)[:, None] + offsets) / float(count)
         for d in range(dim):
-            offsets = self.rng.uniform(0.0, 1.0, size=count)
-            points = strata_edges[:-1] + offsets * (strata_edges[1:] - strata_edges[:-1])
-            self.rng.shuffle(points)
-            samples[:, d] = lower[d] + points * (upper[d] - lower[d])
-        return samples
+            self.rng.shuffle(strata[:, d])
+        return lower + strata * (upper - lower)
 
     def branch_latin_hypercube(
         self,
@@ -103,9 +90,7 @@ class RealityGenerator:
         lower: np.ndarray | None = None,
         upper: np.ndarray | None = None,
     ) -> list:
-        """Branch into `count` children whose states are Latin-Hypercube-sampled
-        across [`lower`, `upper`] (defaults to the room's own bounds), guaranteeing
-        stratified coverage of the room's state envelope rather than i.i.d. noise."""
+        """Branch into `count` children whose states are Latin-Hypercube-sampled."""
         lower = room.lower if lower is None else np.asarray(lower, dtype=float)
         upper = room.upper if upper is None else np.asarray(upper, dtype=float)
         samples = self.latin_hypercube_samples(room.dim, count, lower, upper)
