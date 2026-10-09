@@ -1,21 +1,23 @@
-"""Container/service entrypoint for running a QES production runtime worker pool.
+"""Trusted single-host worker with durable registered-task intake.
 
-This module is what ``python -m qes.worker`` executes inside the Docker image
-(see ``Dockerfile`` / ``docker-compose.yml``). It wires a ``DistributedRuntime``
-to a durable SQLite-backed store so job state survives container restarts,
-then continuously drains a small demo workload and reports telemetry. Real
-deployments should replace ``_demo_jobs`` with job submission from an external
-queue, HTTP API, or message broker.
+The container defaults to ``--task-queue`` and drains submitted data-only tasks.
+Without that option the entrypoint retains its legacy demonstration workload.
 """
 from __future__ import annotations
 
 import argparse
 import logging
 import os
+import signal
+import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from qes.runtime import DistributedRuntime, SQLiteRuntimeStore
+from qes.sdk import QESClient
+from qes.task_queue import RegisteredTaskWorker, SQLiteTaskQueue
 
 logging.basicConfig(
     level=os.environ.get("QES_LOG_LEVEL", "INFO"),
@@ -77,6 +79,66 @@ def run(worker_count: int, cycles: int, interval_seconds: float) -> None:
         store.close()
 
 
+def search_task(payload: object, task_id: str) -> dict:
+    """A bounded registered search task; never deserialize executable callbacks."""
+    if not isinstance(payload, dict):
+        raise ValueError("search payload must be a mapping")
+    allowed = {"lower", "upper", "objective", "population", "steps", "max_evaluations", "seed"}
+    if set(payload) - allowed:
+        raise ValueError("unknown search configuration fields")
+    lower = np.asarray(payload.get("lower", [-5.0, -5.0]), dtype=float)
+    upper = np.asarray(payload.get("upper", [5.0, 5.0]), dtype=float)
+    if lower.ndim != 1 or not 1 <= lower.size <= 128:
+        raise ValueError("search dimension must be in [1,128]")
+    population = payload.get("population", 20)
+    steps = payload.get("steps", 50)
+    evaluations = payload.get("max_evaluations", 1000)
+    for name, value, limit in (("population", population, 256), ("steps", steps, 1000),
+                               ("max_evaluations", evaluations, 10000)):
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= limit:
+            raise ValueError(f"{name} must lie in [1,{limit}]")
+    kind = payload.get("objective", "sphere")
+    if kind not in {"sphere", "rastrigin"}:
+        raise ValueError("objective must be a registered sphere or rastrigin task")
+
+    def objective(x: np.ndarray) -> float:
+        if kind == "rastrigin":
+            return float(10 * x.size + np.sum(x * x - 10 * np.cos(2 * np.pi * x)))
+        return float(x @ x)
+
+    client = QESClient((lower, upper), objective=objective, population=population,
+                       rng=payload.get("seed", 0), max_evaluations=evaluations, max_wall_time=30)
+    result = client.run(steps)
+    return {"task_id": task_id, "status": result.status, "best_state": None if result.best_state is None
+            else result.best_state.tolist(), "best_score": result.best_score,
+            "evaluations": result.evaluations, "stopping_reason": result.stopping_reason}
+
+
+def run_registered(path: str, *, cycles: int, interval_seconds: float, lease_seconds: float = 300) -> None:
+    """Drain a durable local queue with registered trusted handlers and SIGTERM support."""
+    if cycles < 0 or not np.isfinite(interval_seconds) or interval_seconds < 0:
+        raise ValueError("invalid queue polling configuration")
+    queue = SQLiteTaskQueue(path)
+    worker = RegisteredTaskWorker(queue, {"qes.search": search_task}, owner=f"worker-{os.getpid()}")
+    stop = threading.Event()
+    previous_handlers = {}
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, lambda _signum, _frame: stop.set())
+    try:
+        cycle = 0
+        while not stop.is_set() and (cycles == 0 or cycle < cycles):
+            worked = worker.run_one(lease_seconds=lease_seconds)
+            cycle += 1
+            if not worked and not stop.is_set() and (cycles == 0 or cycle < cycles):
+                stop.wait(interval_seconds)
+    finally:
+        queue.close()
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="QES production runtime worker service")
     parser.add_argument("--worker-count", type=int, default=4)
@@ -92,8 +154,15 @@ def main() -> None:
         default=float(os.environ.get("QES_WORKER_INTERVAL_SECONDS", "10")),
         help="Seconds to sleep between scheduling cycles.",
     )
+    parser.add_argument("--task-queue", default=os.environ.get("QES_TASK_QUEUE"),
+                        help="Durable local SQLite task queue; otherwise runs legacy demo jobs")
+    parser.add_argument("--lease-seconds", type=float, default=300)
     args = parser.parse_args()
-    run(worker_count=args.worker_count, cycles=args.cycles, interval_seconds=args.interval)
+    if args.task_queue:
+        run_registered(args.task_queue, cycles=args.cycles, interval_seconds=args.interval,
+                       lease_seconds=args.lease_seconds)
+    else:
+        run(worker_count=args.worker_count, cycles=args.cycles, interval_seconds=args.interval)
 
 
 if __name__ == "__main__":

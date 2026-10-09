@@ -161,7 +161,8 @@ quantum package have different coverage levels. Regression tests now cover
 admissible SDK results, normalized entropy, checkpoint/cache consistency,
 branch isolation, storage retries, and selected quantum/serialization contracts.
 Real GPU, external storage, and multi-host fault handling require separate
-integration validation. See [supported scope and remaining work](docs/production-readiness.md).
+integration validation. See [supported scope and remaining work](docs/production-readiness.md)
+and the [durable worker deployment guide](docs/deployment.md).
 
 Lint and type checks:
 

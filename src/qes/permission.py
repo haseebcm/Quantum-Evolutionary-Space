@@ -109,12 +109,21 @@ class GenesisPermission:
         eps_phi: float = 1e-9,
         m_min: float = 0.0,
     ):
+        parameters = (theta, alpha, beta, gamma, eps_phi, m_min)
+        if not all(np.isfinite(value) for value in parameters):
+            raise ValueError("permission parameters must be finite")
+        if theta < 0 or any(value < 0 for value in (alpha, beta, gamma, eps_phi)):
+            raise ValueError("permission threshold and penalties must be nonnegative")
         self.theta = theta
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
         self.eps_phi = eps_phi
         self.m_min = m_min
+
+    def evaluate_batch(self, candidates: list[tuple]) -> list[PermissionResult]:
+        """Evaluate candidates using the gate's documented population policy."""
+        return [self.evaluate(*candidate) for candidate in candidates]
 
     def inspect(
         self, x: np.ndarray, lower: np.ndarray, upper: np.ndarray,
@@ -136,6 +145,16 @@ class GenesisPermission:
         l_arr = np.asarray(lower, dtype=float)
         u_arr = np.asarray(upper, dtype=float)
 
+        if x_arr.ndim != 1 or x_arr.size == 0 or l_arr.shape != x_arr.shape or u_arr.shape != x_arr.shape:
+            raise ValueError("permission vectors must be nonempty and share a one-dimensional shape")
+        if not all(np.all(np.isfinite(value)) for value in (x_arr, l_arr, u_arr)) or np.any(l_arr > u_arr):
+            raise ValueError("permission state and bounds must be finite with lower <= upper")
+        if w is not None and (np.asarray(w).shape != x_arr.shape or not np.all(np.isfinite(w)) or np.any(np.asarray(w) < 0)):
+            raise ValueError("CCI weights must be finite, nonnegative and match the state")
+        if coupling is not None and (
+            np.asarray(coupling).shape != (x_arr.size, x_arr.size) or not np.all(np.isfinite(coupling))
+        ):
+            raise ValueError("coupling must be a finite square matrix matching the state")
         over = np.maximum(0.0, x_arr - u_arr)
         under = np.maximum(0.0, l_arr - x_arr)
         phi = float(np.sum(over ** 2 + under ** 2))
@@ -160,7 +179,8 @@ class GenesisPermission:
         hard = (phi == 0.0) and (cci < self.theta)
         soft = float(np.exp(-self.alpha * phi) * np.exp(-self.beta * max(0.0, cci - self.theta)))
         admitted = (
-            phi <= self.eps_phi
+            bool(np.all((x_arr >= l_arr) & (x_arr <= u_arr)))
+            and phi <= self.eps_phi
             and cci < self.theta
             and margin >= self.m_min
         )
@@ -202,12 +222,37 @@ class AdaptivePermission(GenesisPermission):
         window: int = 20,
     ):
         super().__init__(theta, alpha, beta, gamma, eps_phi, m_min)
+        if not np.isfinite(target_rate) or not 0 <= target_rate <= 1:
+            raise ValueError("target_rate must be in [0,1]")
+        if not np.isfinite(adapt_rate) or adapt_rate < 0:
+            raise ValueError("adapt_rate must be finite and nonnegative")
+        if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+            raise ValueError("window must be a positive integer")
+        if not np.isfinite(theta_min) or theta_min <= 0:
+            raise ValueError("theta_min must be finite and positive")
+        if theta_max is not None and (not np.isfinite(theta_max) or theta_max < theta_min):
+            raise ValueError("theta_max must be finite and >= theta_min")
         self.target_rate = target_rate
         self.adapt_rate = adapt_rate
         self.theta_min = theta_min
         self.theta_max = theta_max if theta_max is not None else theta * 10.0
         self.window = window
         self._history: list = []
+
+    def evaluate_batch(self, candidates: list[tuple]) -> list[PermissionResult]:
+        """Use one threshold for the population, then adapt once on its admission rate."""
+        results = [self.inspect(*candidate) for candidate in candidates]
+        if results:
+            self._history.append(sum(result.admitted for result in results) / len(results))
+            self._adapt()
+        return results
+
+    def _adapt(self) -> None:
+        if len(self._history) > self.window:
+            del self._history[0]
+        rate = sum(self._history) / len(self._history)
+        adjustment = 1.0 - self.adapt_rate * (rate - self.target_rate)
+        self.theta = float(np.clip(self.theta * adjustment, self.theta_min, self.theta_max))
 
     def evaluate(
         self,
@@ -220,13 +265,7 @@ class AdaptivePermission(GenesisPermission):
         """Evaluate the gate at the current Theta, then adapt Theta for next time."""
         result = super().evaluate(x, lower, upper, w, coupling)
         self._history.append(result.admitted)
-        if len(self._history) > self.window:
-            del self._history[0]
-        rate = sum(self._history) / len(self._history)
-        # Admissions too easy (rate above target) -> tighten (shrink) Theta.
-        # Admissions too hard (rate below target) -> relax (grow) Theta.
-        adjustment = 1.0 - self.adapt_rate * (rate - self.target_rate)
-        self.theta = float(np.clip(self.theta * adjustment, self.theta_min, self.theta_max))
+        self._adapt()
         return result
 
     @property

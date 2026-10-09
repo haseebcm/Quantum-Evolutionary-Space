@@ -162,3 +162,18 @@ def test_layer_checkpoint_restores_vectors_and_isolates_history():
     np.testing.assert_array_equal(layer.history[0]["vector"], [1, 2])
     layer.history[0]["vector"][:] = 9
     np.testing.assert_array_equal(checkpoint["history"][0]["vector"], [1, 2])
+
+
+def test_qel_rollback_restores_clipped_step_and_branch_isolation():
+    from qes.quantum_compute.qel import QELStream
+
+    stream = QELStream("bounded", current=np.array([0.5]),
+                       bounds=(np.array([0.0]), np.array([1.0])))
+    stream.apply_delta(np.array([2.0]))
+    child = stream.branch()
+    child.deltas[0][0] = 99
+    stream.rollback()
+    assert stream.current == pytest.approx([0.5])
+    assert stream.depth == 0
+    with pytest.raises(ValueError):
+        stream.apply_delta(np.array([np.nan]))

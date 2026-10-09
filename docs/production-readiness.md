@@ -1,8 +1,10 @@
 # Correctness fixes, compatibility and supported scope
 
-This branch repairs reproduced library defects. It is not a certification of a
-network service, GPU deployment, external store, or all experimental APIs.
-Release tagging and publication require the appropriate validation gates below.
+This release candidate hardens the trusted classical SDK and single-host task
+worker. It includes reproducible regressions, data-only durable intake, execution
+budgets, local RPC authorization, resource limits and a deployment runbook.
+GPU, external stores, multi-host consensus and advanced quantum APIs remain
+experimental. Release tagging requires passing the CI matrix and review.
 
 ## Result and metric contracts
 
@@ -53,9 +55,31 @@ telemetry is tracked; generated job IDs use UUIDs to avoid collisions on restart
 
 This does not provide exactly-once external effects. A crash after an effect but
 before persistence still requires idempotent handlers or an application-specific
-transaction/outbox protocol. The scheduler's pending queue remains in memory;
-SQLite/Redis/Postgres result stores do not make task intake durable or provide
-atomic multi-worker claiming. Only trusted handlers should be submitted.
+transaction/outbox protocol. The legacy scheduler's pending queue remains in memory. Use `SQLiteTaskQueue`
+for durable intake and atomic single-host claims; result stores alone do not
+provide these guarantees. See [deployment and recovery](deployment.md).
+Only trusted registered handlers should be submitted.
+
+## Budgets, validation and tick failure policy
+
+`QESClient` and `optimize` accept `max_evaluations` and `max_wall_time`.
+Every objective invocation, including initialization and finite-difference probes,
+counts before execution. SDK caps apply across repeated runs on one client.
+Results report `evaluations` and `stopping_reason`; `cancel()` refuses new work.
+Deadlines are cooperative and cannot interrupt an already-running callback.
+A zero budget can produce no feasible solution without invoking the objective.
+
+Room execution validates finite states, ordered matching bounds and couplings.
+A tick stages all callback vectors before committing any vector writes. Callback
+memory mutations and external effects use an explicit best-effort contract and
+are not rolled back. Adaptive population evaluation inspects the whole batch at
+one threshold and adapts once, avoiding admission changes caused by room order.
+
+Default limits include 10,000 rooms, 1,000 space history entries, 256 agent inbox
+messages, 10,000 events, 1,000 in-memory pending jobs, 10,000 durable records and
+1 MiB serialized task payload/result. History evicts oldest entries; intake,
+inboxes and event logs reject capacity overflow explicitly. Durable terminal
+records count toward capacity until deliberately purged.
 
 ## Experimental quantum API and migration
 
@@ -89,9 +113,9 @@ many evolution/synchronization primitives still need independent contract tests.
   complete authenticated storage or adversarial-input isolation system.
 
 These changes need compatibility review before publishing a release. The
-single-source version is aligned with the previous source version, `1.4.0`;
-this branch does not create a release tag. Select the next release version using
-the documented semantic-version policy and migration scope.
+single-source version is `2.0.0rc1`, reflecting the serialization and validation
+compatibility changes. This branch does not create a release tag or publish a
+package.
 
 ## Validation gates
 
@@ -120,28 +144,28 @@ implemented work does not satisfy the entire acceptance section.
 |---|---|---|
 | C01 admissible results | Implemented for SDK/default optimizer | Broader pattern reuse must validate against its consuming application |
 | C02 entropy/concentration | Implemented | Domain-specific geometric/objective stopping metrics |
-| C03 selection semantics | Documented existing opt-in behavior | Optional SDK survivor policy if needed |
+| C03 selection semantics | Implemented opt-in SDK survivor policy | Domain-specific signature policy |
 | C04 restore/cache | Implemented | Direct lifecycle edits remain outside the supported cache contract |
 | C05 branch isolation | Implemented for copyable object graphs | Portable callback/resource state protocol |
-| C06 numerical boundaries | Partial | Uniform validation across the wider API and adaptive population-order contract |
-| C07 callback failures | Open | Transactional or explicit best-effort tick policy; external effects remain caller-owned |
+| C06 numerical boundaries | Core validation and batch adaptive gate implemented | Experimental wider API contracts |
+| C07 callback failures | Vector writes staged until all callbacks validate | Callback memory and external effects remain caller-owned |
 | O01 bounded gradients | Implemented basic bounded secants | Analytic-gradient support and higher-order boundary schemes |
-| O02 hard budgets | Open | Evaluation/wall-time budgets, cancellation and stopping reasons |
+| O02 hard budgets | Evaluation cap, cooperative deadline/cancel and stopping reasons implemented | Preemptive isolation for untrusted/hanging callbacks is outside supported scope |
 | O03 performance evidence | Open | Held-out workloads, strong baselines, domain ablations |
 | Q01 physical states | Partial | Broader multi-qubit and density-matrix API validation |
 | Q02 local operators | Implemented for built-in circuit gates | Benchmarks and tests for the remaining circuit helpers |
 | Q03 serialization | Implemented migration | Broader schema-depth/resource and application authentication requirements |
 | Q04 quantum tests | Partial | Independent tests across all exported primitives |
 | R01 storage retries | Implemented | Crash-safe application idempotency for external effects |
-| R02 durable intake | Open, service-only | Persistent queue, atomic claims/leases and delivery contract |
-| R03 retention/limits | Open | Bounded queues, histories, inboxes and enforced quotas |
-| R04 shutdown/telemetry | Partial | Deadlines, cancellation, SIGTERM/draining and durable recovery |
-| R05 durable stores | Open | SQL identifier handling, transactions, migrations and real-store restore tests |
-| S01 dispatch authorization | Open, service-only | Wire identity, scopes and tenant isolation into network dispatch |
-| S02 execution isolation | Documented limitation | Bound network concurrency; isolate untrusted executable workloads if supported |
-| S03 leadership/retries | Open, multi-host-only | Deduplication, fencing/coordination and partition tests |
-| P01 packaging/version | Implemented | Choose release version; CI matrix evidence |
+| R02 durable intake | Local SQLite queue, atomic leases, fencing and at-least-once contract implemented | Multi-host broker integration is experimental |
+| R03 retention/limits | Bounded intake, payloads, rooms, histories, inboxes, events and RPC connections | Operator disk/container quotas and retention scheduling |
+| R04 shutdown/telemetry | Registered worker SIGTERM, deadline, result metadata and recovery tested | Hosted metrics/alert routing belongs to deployment |
+| R05 durable stores | PostgreSQL identifier validation/transaction locking; queue schema and backup restore tested | Actual remote Postgres/Redis integration validation |
+| S01 dispatch authorization | Local RPC signed-token verification, method scopes and supplied tenant checks implemented | TLS gateway, key rotation, application object authorization |
+| S02 execution isolation | Loopback network binding and bounded concurrency; data-only registered worker | OS isolation for untrusted callbacks is outside supported scope |
+| S03 leadership/retries | Local queue fencing and bounded process-local RPC deduplication | Multi-host consensus and partition safety remain experimental |
+| P01 packaging/version | Typed installed wheel and 2.0.0rc1 release candidate implemented | Passing hosted CI matrix and release approval |
 | P02 CI semantics | Partial | Feature-specific coverage gates and actual integration jobs |
-| P03 contracts/docs | Partial | Full wider-API support classification and domain onboarding |
+| P03 contracts/docs | Supported core/worker contract and deployment/recovery runbook implemented | Experimental APIs need independent promotion evidence |
 
 Unimplemented items must not be described as completed production guarantees.

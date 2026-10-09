@@ -17,6 +17,7 @@ reproducible experiments (see also `Room.lineage`, `Universe.event_log`,
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 from dataclasses import dataclass, field
@@ -108,7 +109,10 @@ class EventLog:
     as a cheaper audit trail plus the basis for `DeterministicReplay`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_events: int = 10000) -> None:
+        if not isinstance(max_events, int) or isinstance(max_events, bool) or max_events < 1:
+            raise ValueError("max_events must be a positive integer")
+        self.max_events = max_events
         self._events: list[Event] = []
 
     def record(
@@ -119,9 +123,11 @@ class EventLog:
         timestamp: float = 0.0,
     ) -> Event:
         """Append and return a new event."""
+        if len(self._events) >= self.max_events:
+            raise OverflowError("event log capacity exceeded; archive before recording more events")
         event = Event(
             kind=kind,
-            payload=dict(payload or {}),
+            payload=copy.deepcopy(payload or {}),
             parent_ids=list(parent_ids or []),
             timestamp=timestamp,
         )

@@ -78,9 +78,16 @@ class Agent:
     memory_capacity: int = 256
     memory_decay: float = 1.0
     history_capacity: int = 256
+    inbox_capacity: int = 256
     inbox: list = field(default_factory=list)
     history: list = field(default_factory=list)
     id: str = field(default_factory=_next_id)
+
+    def __post_init__(self) -> None:
+        for name in ("memory_capacity", "history_capacity", "inbox_capacity"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
 
     def perceive(self, observation: dict) -> None:
         """Fold an observation into memory (bounded, insertion-ordered)."""
@@ -132,6 +139,8 @@ class Agent:
     # ------------------------------------------------------------------
     def send(self, other: Agent, payload: Any, t: float = 0.0) -> None:
         """Deliver a message to another agent's inbox."""
+        if len(other.inbox) >= other.inbox_capacity:
+            raise OverflowError("recipient inbox is full")
         other.inbox.append(Message(sender=self.id, payload=payload, t=t))
 
     def receive(self) -> list:

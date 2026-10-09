@@ -60,9 +60,16 @@ class QESSpace:
         step_fn: StepFn | None = None,
         dt: float = 1.0,
         max_workers: int | None = None,
+        max_rooms: int = 10000,
+        max_history: int = 1000,
     ):
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("dt must be finite and positive")
+        for name, value in (("max_rooms", max_rooms), ("max_history", max_history)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        self.max_rooms = max_rooms
+        self.max_history = max_history
         self.permission_gate = permission_gate
         self.domain = domain
         self.step_fn = step_fn
@@ -81,6 +88,8 @@ class QESSpace:
     # Generation (G)
     # ------------------------------------------------------------------
     def add_room(self, room: Room) -> None:
+        if len(self.rooms) >= self.max_rooms:
+            raise OverflowError("space room capacity exceeded")
         if room.id in self.rooms:
             raise ValueError(f"duplicate room id: {room.id}")
         room.state = "Active" if room.state == "Seed" else room.state
@@ -103,16 +112,21 @@ class QESSpace:
         """Advance every active room's state one tick (E)."""
         step = self.step_fn or self._default_step
         active = self.active_rooms()
+        for room in active:
+            room.validate()
+        # Stage pure vector outputs before committing them. Callback-owned memory
+        # and external effects are best-effort and are not rolled back.
         if self.max_workers and self.max_workers > 1 and len(active) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-                new_states = list(
-                    pool.map(lambda room: step(room, self.time, self.dt), active)
-                )
-            for room, new_state in zip(active, new_states, strict=True):
-                room.x = np.asarray(new_state, dtype=float)
+                new_states = list(pool.map(lambda room: step(room, self.time, self.dt), active))
         else:
-            for room in active:
-                room.x = np.asarray(step(room, self.time, self.dt), dtype=float)
+            new_states = [step(room, self.time, self.dt) for room in active]
+        converted = [np.asarray(value, dtype=float) for value in new_states]
+        for room, value in zip(active, converted, strict=True):
+            if value.shape != room.x.shape or not np.all(np.isfinite(value)):
+                raise ValueError(f"step output for {room.id} must be finite and match its state shape")
+        for room, value in zip(active, converted, strict=True):
+            room.x = value.copy()
 
     # ------------------------------------------------------------------
     # Divergence measurement (D)
@@ -137,12 +151,11 @@ class QESSpace:
         results = {}
         active = self.active_rooms()
         collapsed_any = False
-        eval_fn = self.permission_gate.evaluate
-        for room in active:
-            cci_weights = room.gates.get("cci_weights")
-            result = eval_fn(
-                room.x, room.lower, room.upper, cci_weights, room.couplings
-            )
+        evaluated = self.permission_gate.evaluate_batch([
+            (room.x, room.lower, room.upper, room.gates.get("cci_weights"), room.couplings)
+            for room in active
+        ])
+        for room, result in zip(active, evaluated, strict=True):
             room.memory["permission"] = result
             room.weight = result.soft_permission
             results[room.id] = result
@@ -206,6 +219,8 @@ class QESSpace:
         self.time += self.dt
         telemetry = self.telemetry()
         self.history.append(telemetry)
+        if len(self.history) > self.max_history:
+            del self.history[:-self.max_history]
         return telemetry
 
     def run(self, steps: int) -> list:

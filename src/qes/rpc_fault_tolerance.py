@@ -12,6 +12,8 @@ code: ordinary sockets, threads, heartbeats, retries, and leader selection.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import random
 import socket
@@ -20,6 +22,8 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeVar
+
+from qes.security import PermissionDeniedError, TokenIssuer
 
 _MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 _RESERVED_METHODS = {"__heartbeat__", "__ping__"}
@@ -286,9 +290,19 @@ class RPCServer:
         socket_timeout: float = 0.2,
         heartbeat_timeout: float = 0.3,
         detector_check_interval: float = 0.05,
+        token_issuer: TokenIssuer | None = None,
+        max_connections: int = 64,
+        max_cached_requests: int = 1024,
     ) -> None:
         """Configure a server that will bind when :meth:`start` is called."""
         self._host = _require_host(host)
+        if self._host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("RPC supports loopback only; use an authenticated TLS gateway for remote access")
+        self.token_issuer = token_issuer
+        self._connections = threading.BoundedSemaphore(_require_positive_int("max_connections", max_connections))
+        self._max_cached_requests = _require_positive_int("max_cached_requests", max_cached_requests)
+        self._request_cache: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
+        self._dispatch_lock = threading.Lock()
         self._port = _require_port(port)
         self.server_id = server_id or f"{self._host}:{self._port or 'ephemeral'}"
         self.socket_timeout = _require_positive_float("socket_timeout", socket_timeout)
@@ -387,6 +401,9 @@ class RPCServer:
                 if self._running.is_set():
                     continue
                 break
+            if not self._connections.acquire(blocking=False):
+                client_socket.close()
+                continue
             client_socket.settimeout(self.socket_timeout)
             with self._lock:
                 self._client_sockets.add(client_socket)
@@ -409,6 +426,7 @@ class RPCServer:
         except (ConnectionError, OSError, EOFError, TimeoutError, ValueError, json.JSONDecodeError):
             return
         finally:
+            self._connections.release()
             with self._lock:
                 self._client_sockets.discard(client_socket)
             try:
@@ -424,19 +442,46 @@ class RPCServer:
             return self._error_response(request_id, "ValueError", "request method must be a non-empty string")
         normalized = method.strip()
         try:
-            if normalized == "__heartbeat__":
-                return self._handle_heartbeat(request_id, params)
-            if normalized == "__ping__":
-                return self._ok_response(
-                    request_id,
-                    {"server_id": self.server_id, "monotonic": time.monotonic()},
-                )
-            handler = self._handlers.get(normalized)
-            if handler is None:
-                raise LookupError(f"unknown RPC method {normalized!r}")
-            result = handler(params)
-            return self._ok_response(request_id, result)
-        except Exception as exc:  # pragma: no cover - exercised in tests via public call path.
+            subject = str(request.get("client_id", "anonymous"))
+            if self.token_issuer is not None:
+                claims = self.token_issuer.verify(request.get("token", ""))
+                if f"rpc:{normalized}" not in claims.scopes:
+                    raise PermissionDeniedError("token lacks required RPC method scope")
+                subject = claims.subject
+                if isinstance(params, dict) and "tenant_id" in params:
+                    tenant_id = params["tenant_id"]
+                    if tenant_id != subject and f"tenant:{tenant_id}" not in claims.scopes:
+                        raise PermissionDeniedError("token cannot access requested tenant")
+            fingerprint = hashlib.sha256(json.dumps(
+                {"method": normalized, "params": params}, sort_keys=True, allow_nan=False,
+            ).encode("utf8")).hexdigest()
+            key = (subject, request_id)
+            # Bounded process-local response deduplication. This is not crash-safe
+            # exactly-once execution; durable operations must use task idempotency.
+            with self._dispatch_lock:
+                if request_id and key in self._request_cache:
+                    previous_fingerprint, response = self._request_cache[key]
+                    if previous_fingerprint != fingerprint:
+                        raise ValueError("request ID reused for different content")
+                    return copy.deepcopy(response)
+                if normalized == "__heartbeat__":
+                    response = self._handle_heartbeat(request_id, params)
+                elif normalized == "__ping__":
+                    response = self._ok_response(request_id, {"server_id": self.server_id, "monotonic": time.monotonic()})
+                else:
+                    handler = self._handlers.get(normalized)
+                    if handler is None:
+                        raise LookupError(f"unknown RPC method {normalized!r}")
+                    result = handler(params)
+                    # Fail locally before caching an unserializable result.
+                    json.dumps(result, allow_nan=False)
+                    response = self._ok_response(request_id, result)
+                if request_id:
+                    if len(self._request_cache) >= self._max_cached_requests:
+                        del self._request_cache[next(iter(self._request_cache))]
+                    self._request_cache[key] = (fingerprint, copy.deepcopy(response))
+                return response
+        except Exception as exc:
             return self._error_response(request_id, type(exc).__name__, str(exc))
 
     def _handle_heartbeat(self, request_id: str, params: Any) -> dict[str, Any]:
@@ -487,6 +532,7 @@ class RPCClient:
         client_id: str = "rpc-client",
         timeout: float = 0.2,
         retry_policy: RetryPolicy | None = None,
+        token: str | None = None,
     ) -> None:
         """Initialize a client for the given host/port."""
         self.host = _require_host(host)
@@ -494,6 +540,7 @@ class RPCClient:
         self.client_id = _require_nonempty_string("client_id", client_id)
         self.timeout = _require_positive_float("timeout", timeout)
         self.retry_policy = retry_policy
+        self.token = token
         self._request_counter = 0
         self._counter_lock = threading.Lock()
         self._heartbeat_stop = threading.Event()
@@ -504,8 +551,10 @@ class RPCClient:
         normalized = _require_nonempty_string("method", method)
         effective_timeout = self.timeout if timeout is None else _require_positive_float("timeout", timeout)
 
+        request_id = self._next_request_id()
+
         def operation() -> Any:
-            return self._call_once(normalized, params, timeout=effective_timeout)
+            return self._call_once(normalized, params, timeout=effective_timeout, request_id=request_id)
 
         if self.retry_policy is None:
             return operation()
@@ -537,13 +586,14 @@ class RPCClient:
             thread.join(timeout=max(self.timeout * 4.0, 0.2))
         self._heartbeat_thread = None
 
-    def _call_once(self, method: str, params: Any, *, timeout: float) -> Any:
-        request_id = self._next_request_id()
+    def _call_once(self, method: str, params: Any, *, timeout: float, request_id: str | None = None) -> Any:
+        request_id = request_id or self._next_request_id()
         payload = {
             "request_id": request_id,
             "method": method,
             "params": params,
             "client_id": self.client_id,
+            "token": self.token,
         }
         try:
             with socket.create_connection((self.host, self.port), timeout=timeout) as sock:

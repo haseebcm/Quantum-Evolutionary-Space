@@ -2,9 +2,8 @@ version: "3.9"
 
 # Local, single-node reference deployment of the QES production runtime.
 # Scale `worker` horizontally with `docker compose up --scale worker=3`
-# once the entrypoint reads jobs from a shared queue instead of the demo
-# workload; for now each replica runs its own in-container scheduler
-# against a shared SQLite volume for durable job history.
+# for trusted single-host work with atomic SQLite claims on the same local
+# volume. Do not use this SQLite database across network-mounted filesystems.
 services:
   worker:
     build:
@@ -16,7 +15,7 @@ services:
       QES_RUNTIME_STATE_DIR: /app/state
       QES_WORKER_CYCLES: "0"
       QES_WORKER_INTERVAL_SECONDS: "10"
-    command: ["--worker-count", "4"]
+    command: ["--task-queue", "/app/state/tasks.sqlite"]
     volumes:
       - qes-runtime-state:/app/state
     restart: unless-stopped

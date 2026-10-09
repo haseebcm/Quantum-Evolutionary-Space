@@ -35,10 +35,14 @@ class QELStream:
         delta : np.ndarray
             The delta to apply.
         """
-        self.current = np.asarray(self.current, dtype=float) + np.asarray(delta, dtype=float)
+        previous = np.asarray(self.current, dtype=float)
+        delta = np.asarray(delta, dtype=float)
+        if delta.shape != previous.shape or not np.all(np.isfinite(delta)):
+            raise ValueError("delta must be finite and match the stream shape")
+        self.current = previous + delta
         if self.bounds is not None:
             self.current = np.clip(self.current, self.bounds[0], self.bounds[1])
-        self.deltas.append(np.asarray(delta, dtype=float))
+        self.deltas.append((self.current - previous).copy())
         self.depth += 1
 
     def apply_deltas(self, deltas: list[np.ndarray]) -> None:
@@ -93,7 +97,7 @@ class QELStream:
             name=child_name,
             current=self.current.copy(),
             depth=self.depth,
-            deltas=self.deltas.copy(),
+            deltas=[delta.copy() for delta in self.deltas],
             parent_id=self.stream_id,
             generation_id=self.generation_id + 1,
             bounds=pycopy.deepcopy(self.bounds) if self.bounds else None,
@@ -137,6 +141,8 @@ class QELStream:
         n : int
             Number of deltas to undo.
         """
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("rollback count must be a nonnegative integer")
         n_actual = min(n, len(self.deltas))
         for _ in range(n_actual):
             delta = self.deltas.pop()

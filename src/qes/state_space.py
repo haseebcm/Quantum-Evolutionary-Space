@@ -30,6 +30,12 @@ class MCCStateSpace:
         self.reference = np.asarray(reference, dtype=float)
         if not (self.lower.shape == self.upper.shape == self.reference.shape):
             raise ValueError("lower, upper, and reference must share the same shape")
+        if self.lower.ndim != 1 or self.lower.size == 0 or not all(
+            np.all(np.isfinite(value)) for value in (self.lower, self.upper, self.reference)
+        ):
+            raise ValueError("state-space vectors must be finite and one-dimensional")
+        if np.any(self.lower > self.upper):
+            raise ValueError("lower bounds must not exceed upper bounds")
         if names is not None and len(names) != self.lower.shape[0]:
             raise ValueError("names must have one entry per state dimension")
         self.names: list[str] | None = list(names) if names is not None else None
@@ -41,6 +47,8 @@ class MCCStateSpace:
     def within_envelope(self, x: np.ndarray) -> np.ndarray:
         """Elementwise boolean mask: L_j <= x_j <= U_j."""
         x = np.asarray(x, dtype=float)
+        if x.shape != self.lower.shape or not np.all(np.isfinite(x)):
+            raise ValueError("state must be finite and match the state-space shape")
         return (x >= self.lower) & (x <= self.upper)
 
     def is_admissible(self, x: np.ndarray) -> bool:
@@ -49,7 +57,9 @@ class MCCStateSpace:
 
     def clip(self, x: np.ndarray) -> np.ndarray:
         """Project x back into [L, U]."""
-        return np.clip(np.asarray(x, dtype=float), self.lower, self.upper)
+        x = np.asarray(x, dtype=float)
+        self.within_envelope(x)
+        return np.clip(x, self.lower, self.upper)
 
     def volume(self) -> float:
         """Lebesgue measure of the bounding box Omega = prod_j (U_j - L_j)."""

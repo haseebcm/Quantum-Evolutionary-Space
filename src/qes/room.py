@@ -67,6 +67,22 @@ class Room:
         if self.couplings is None:
             self.couplings = np.eye(n)
 
+    def validate(self) -> None:
+        """Validate execution inputs while allowing invalid rooms for diagnostics."""
+        arrays = (self.x, self.x_star, self.lower, self.upper, self.activation)
+        if self.x.ndim != 1 or self.x.size == 0:
+            raise ValueError("room state must be a nonempty one-dimensional vector")
+        if any(value.shape != self.x.shape or not np.all(np.isfinite(value)) for value in arrays):
+            raise ValueError("room vectors must be finite and share the state shape")
+        if np.any(self.lower > self.upper):
+            raise ValueError("room lower bounds must not exceed upper bounds")
+        if np.any((self.activation < 0) | (self.activation > 1)):
+            raise ValueError("room activation must lie in [0, 1]")
+        if self.couplings is not None and (
+            self.couplings.shape != (self.dim, self.dim) or not np.all(np.isfinite(self.couplings))
+        ):
+            raise ValueError("room coupling matrix must be finite and square with the state dimension")
+
     @property
     def dim(self) -> int:
         """Dimensionality n_i of this room's state space M_i = R^n_i."""

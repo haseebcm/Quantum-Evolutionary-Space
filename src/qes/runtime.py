@@ -11,10 +11,12 @@ from __future__ import annotations
 import hmac
 import itertools
 import json
+import re
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -259,6 +261,8 @@ class PostgresRuntimeStore(RuntimeStore):
         table: str = "qes_runtime_jobs",
         connection: Any = None,
     ):
+        if not isinstance(table, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", table) is None:
+            raise ValueError("table must be a simple SQL identifier of at most 63 characters")
         self._table = table
         self._lock = threading.Lock()
         if connection is None:
@@ -269,7 +273,7 @@ class PostgresRuntimeStore(RuntimeStore):
                 )
             connection = _psycopg2_module.connect(dsn)
         self._conn = connection
-        with self._lock, self._conn.cursor() as cursor:
+        with self._transaction() as cursor:
             cursor.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self._table} (
@@ -278,12 +282,23 @@ class PostgresRuntimeStore(RuntimeStore):
                 )
                 """
             )
-        self._conn.commit()
         super().__init__()
+
+    @contextmanager
+    def _transaction(self) -> Iterator[Any]:
+        with self._lock:
+            try:
+                with self._conn.cursor() as cursor:
+                    yield cursor
+                self._conn.commit()
+            except Exception:
+                if hasattr(self._conn, "rollback"):
+                    self._conn.rollback()
+                raise
 
     def put(self, key: str, value: Any) -> Any:
         payload = json.dumps(value, sort_keys=True)
-        with self._lock, self._conn.cursor() as cursor:
+        with self._transaction() as cursor:
             cursor.execute(
                 f"""
                 INSERT INTO {self._table} (job_id, payload) VALUES (%s, %s)
@@ -291,12 +306,11 @@ class PostgresRuntimeStore(RuntimeStore):
                 """,
                 (key, payload),
             )
-        self._conn.commit()
         self._data[key] = value
         return value
 
     def get(self, key: str, default: Any = None) -> Any:
-        with self._lock, self._conn.cursor() as cursor:
+        with self._transaction() as cursor:
             cursor.execute(f"SELECT payload FROM {self._table} WHERE job_id = %s", (key,))
             row = cursor.fetchone()
         if row is None:
@@ -307,7 +321,7 @@ class PostgresRuntimeStore(RuntimeStore):
         return value
 
     def snapshot(self) -> dict[str, Any]:
-        with self._lock, self._conn.cursor() as cursor:
+        with self._transaction() as cursor:
             cursor.execute(f"SELECT job_id, payload FROM {self._table} ORDER BY job_id")
             rows = cursor.fetchall()
         data = {}
@@ -317,9 +331,8 @@ class PostgresRuntimeStore(RuntimeStore):
         return dict(data)
 
     def clear(self) -> None:
-        with self._lock, self._conn.cursor() as cursor:
+        with self._transaction() as cursor:
             cursor.execute(f"DELETE FROM {self._table}")
-        self._conn.commit()
         self._data.clear()
 
     def close(self) -> None:
@@ -330,7 +343,10 @@ class PostgresRuntimeStore(RuntimeStore):
 class RuntimeScheduler:
     """Prioritized scheduler for QES jobs with optional thread-based dispatch."""
 
-    def __init__(self, *, max_workers: int = 1, store: RuntimeStore | None = None):
+    def __init__(self, *, max_workers: int = 1, store: RuntimeStore | None = None, max_queue: int = 1000):
+        if not isinstance(max_queue, int) or isinstance(max_queue, bool) or max_queue < 1:
+            raise ValueError("max_queue must be a positive integer")
+        self.max_queue = max_queue
         self.max_workers = max_workers if max_workers > 0 else 1
         self.store = store or RuntimeStore()
         self._queue: list[RuntimeJob] = []
@@ -359,6 +375,8 @@ class RuntimeScheduler:
                 at submission time rather than deep inside a worker thread).
             TypeError: if ``handler`` is not callable.
         """
+        if len(self._queue) >= self.max_queue:
+            raise OverflowError("runtime queue capacity exceeded")
         if not isinstance(name, str) or not name.strip():
             raise ValueError("job name must be a non-empty string")
         if not callable(handler):

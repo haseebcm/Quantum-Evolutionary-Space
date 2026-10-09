@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from qes.execution import CountedObjective, ExecutionBudget, ExecutionStopped
 from qes.permission import GenesisPermission
 from qes.reality_generator import RealityGenerator
 from qes.room import Room
@@ -329,6 +330,7 @@ class OptimizationResult:
     iterations: int
     evaluations: int
     survivors: int
+    stopping_reason: str = "steps_completed"
 
 
 def optimize(
@@ -341,6 +343,8 @@ def optimize(
     permission_theta: float = 10.0,
     config: AdaptiveSearchConfig | None = None,
     rng: np.random.Generator | None = None,
+    max_evaluations: int | None = None,
+    max_wall_time: float | None = None,
 ) -> OptimizationResult:
     """Governed, adaptive optimization of `objective` starting from `seed`.
 
@@ -366,15 +370,9 @@ def optimize(
     if rng is not None and not isinstance(rng, np.random.Generator):
         raise TypeError("rng must be a numpy.random.Generator when provided")
     rng = rng or np.random.default_rng()
-    evaluations = 0
-
-    def counted_objective(x: np.ndarray) -> float:
-        nonlocal evaluations
-        evaluations += 1
-        value = float(objective(x))
-        if not np.isfinite(value):
-            raise ValueError("objective must return a finite scalar")
-        return value
+    budget = ExecutionBudget(max_evaluations)
+    budget.start(max_wall_time)
+    counted_objective = CountedObjective(objective, budget)
 
     search = AdaptiveGradientSearch(objective=counted_objective, config=config, rng=rng)
     generator = RealityGenerator(rng=rng)
@@ -390,15 +388,30 @@ def optimize(
     space.spawn(children)
 
     iterations_run = 0
+    stopping_reason = "steps_completed"
     for _ in range(iterations):
-        space.step()
+        try:
+            budget.check()
+            space.step()
+        except ExecutionStopped as exc:
+            stopping_reason = exc.reason
+            break
         iterations_run += 1
         if not space.active_rooms():
+            stopping_reason = "no_active_rooms"
             break
 
     candidates = []
     for room in space.active_rooms():
-        candidate, value = search.best_known(room)
+        if config is not None and config.memory_key not in room.memory and stopping_reason != "steps_completed":
+            continue
+        if search.config.memory_key not in room.memory and stopping_reason != "steps_completed":
+            continue
+        try:
+            candidate, value = search.best_known(room)
+        except ExecutionStopped as exc:
+            stopping_reason = exc.reason
+            break
         if space.permission_gate.inspect(
             candidate, room.lower, room.upper, room.gates.get("cci_weights"), room.couplings,
         ).admitted:
@@ -406,7 +419,10 @@ def optimize(
     if not children and space.permission_gate.inspect(
         seed.x, seed.lower, seed.upper, seed.gates.get("cci_weights"), seed.couplings,
     ).admitted:
-        candidates.append((seed.x.copy(), counted_objective(seed.x)))
+        try:
+            candidates.append((seed.x.copy(), counted_objective(seed.x)))
+        except ExecutionStopped as exc:
+            stopping_reason = exc.reason
     if not candidates:
         raise NoFeasibleSolutionError("no admissible solution found")
     best_x, best_value = min(candidates, key=lambda item: item[1])
@@ -415,8 +431,9 @@ def optimize(
         best_x=best_x,
         best_value=best_value,
         iterations=iterations_run,
-        evaluations=evaluations,
+        evaluations=budget.evaluations,
         survivors=len(space.active_rooms()),
+        stopping_reason=stopping_reason,
     )
 
 

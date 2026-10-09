@@ -21,6 +21,7 @@ from time import perf_counter
 import numpy as np
 import numpy.typing as npt
 
+from qes.execution import CountedObjective, ExecutionBudget, ExecutionStopped
 from qes.intelligence import AdaptiveGradientSearch, AdaptiveSearchConfig
 from qes.patterns import Pattern, PatternMemory
 from qes.permission import AdaptivePermission, GenesisPermission
@@ -138,6 +139,8 @@ class SDKRunResult:
     wall_time_seconds: float
     steps: int
     telemetry: SpaceTelemetry
+    evaluations: int = 0
+    stopping_reason: str = "steps_completed"
 
     @property
     def status(self) -> str:
@@ -171,6 +174,10 @@ class QESClient:
         dt: float = 1.0,
         max_workers: int | None = None,
         intent: str = "sdk-search",
+        max_evaluations: int | None = None,
+        max_wall_time: float | None = None,
+        survivors_per_kind: int | None = None,
+        signature_fn: Callable[[Room], object] | None = None,
     ) -> None:
         if (step_fn is None) == (objective is None):
             raise ValueError("provide exactly one of step_fn or objective")
@@ -221,10 +228,23 @@ class QESClient:
             activation=np.ones_like(self.lower),
         )
 
+        if max_evaluations is not None and objective is None:
+            raise ValueError("max_evaluations requires an objective")
+        self.budget = ExecutionBudget(max_evaluations)
+        self.budget.start(max_wall_time)
+        self.max_wall_time = max_wall_time
+        if (survivors_per_kind is None) != (signature_fn is None):
+            raise ValueError("provide both survivors_per_kind and signature_fn")
+        if survivors_per_kind is not None and (
+            not isinstance(survivors_per_kind, int) or isinstance(survivors_per_kind, bool) or survivors_per_kind < 0
+        ):
+            raise ValueError("survivors_per_kind must be a nonnegative integer")
+        self.survivors_per_kind = survivors_per_kind
+        self.signature_fn = signature_fn
         self._objective = objective
         self._score_fn = score_fn
         self._search = (
-            AdaptiveGradientSearch(objective=objective, config=search_config, rng=self.rng)
+            AdaptiveGradientSearch(objective=CountedObjective(objective, self.budget), config=search_config, rng=self.rng)
             if objective is not None
             else None
         )
@@ -289,6 +309,7 @@ class QESClient:
 
         ranked: list[tuple[Room, npt.NDArray[np.float64], float | None]] = [
             (room, *self._candidate_for_room(room)) for room in rooms
+            if self._search is None or self._search.config.memory_key in room.memory
         ]
         scored: list[tuple[Room, npt.NDArray[np.float64], float]] = [
             (room, state, score)
@@ -319,17 +340,37 @@ class QESClient:
         self.memory.store(pattern)
         self.memory.retire_dominated(self.intent)
 
+    def cancel(self) -> None:
+        """Refuse subsequent callback calls; running callbacks finish normally."""
+        self.budget.cancel()
+
     def run(self, steps: int) -> SDKRunResult:
         """Advance the search for up to `steps` QES ticks and return a summary."""
         if not isinstance(steps, int) or steps < 0:
             raise ValueError("steps must be an integer >= 0")
 
+        # Restore may have replaced a cloneable strategy/budget object graph.
+        if isinstance(self.space.step_fn, AdaptiveGradientSearch):
+            self._search = self.space.step_fn
+            if isinstance(self._search.objective, CountedObjective):
+                self.budget = self._search.objective.budget
+        self.budget.start(self.max_wall_time)
         started = perf_counter()
         executed_steps = 0
+        stopping_reason = "steps_completed"
         for _ in range(steps):
             if not self.space.active_rooms():
+                stopping_reason = "no_active_rooms"
                 break
-            telemetry = self.space.step()
+            try:
+                self.budget.check()
+                telemetry = self.space.step()
+            except ExecutionStopped as exc:
+                stopping_reason = exc.reason
+                break
+            if self.signature_fn is not None:
+                self.space.select(self.survivors_per_kind, self.signature_fn)
+                telemetry = self.space.telemetry()
             self._record_pattern(telemetry)
             executed_steps += 1
         wall_time = perf_counter() - started
@@ -350,6 +391,8 @@ class QESClient:
             wall_time_seconds=wall_time,
             steps=executed_steps,
             telemetry=telemetry,
+            evaluations=self.budget.evaluations,
+            stopping_reason=stopping_reason,
         )
 
 
@@ -370,6 +413,8 @@ def quick_search(
     dt: float = 1.0,
     max_workers: int | None = None,
     intent: str = "quick-search",
+    max_evaluations: int | None = None,
+    max_wall_time: float | None = None,
 ) -> SDKRunResult:
     """One-shot helper for a full QES search run."""
     client = QESClient(
@@ -387,6 +432,8 @@ def quick_search(
         dt=dt,
         max_workers=max_workers,
         intent=intent,
+        max_evaluations=max_evaluations,
+        max_wall_time=max_wall_time,
     )
     return client.run(steps)
 

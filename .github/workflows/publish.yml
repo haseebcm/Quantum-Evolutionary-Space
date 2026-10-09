@@ -12,8 +12,34 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  validate:
+    name: Release checks (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check src tests examples
+      - run: mypy
+      - run: pytest -q
+      - name: Run shipped examples
+        run: |
+          for example in examples/*.py; do
+            timeout 60s python "$example"
+          done
+      - name: Benchmark regression gate
+        if: matrix.python == '3.12'
+        run: python benchmarks/run_benchmarks.py --repeat 5 --baseline benchmarks/qes_benchmarks.json --fail-on-regression
+
   build:
     name: Build distribution
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +58,7 @@ jobs:
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION=$(python -c "import runpy; print(runpy.run_path('src/qes/_version.py')['__version__'])")
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match pyproject.toml version ($PKG_VERSION)"
+            echo "Tag version ($TAG_VERSION) does not match package source version ($PKG_VERSION)"
             exit 1
           fi
 
@@ -43,6 +69,16 @@ jobs:
 
       - name: Build sdist and wheel
         run: python -m build
+
+      - name: Verify installed wheel outside checkout
+        run: |
+          python -m pip uninstall -y qes
+          python -m pip install dist/*.whl
+          TASK_TEST_DIR=$(mktemp -d)
+          cp -r tests "$TASK_TEST_DIR/tests"
+          cd "$TASK_TEST_DIR"
+          python -m pytest -q tests
+          python -c "import importlib.metadata, qes; assert qes.__version__ == importlib.metadata.version('qes')"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

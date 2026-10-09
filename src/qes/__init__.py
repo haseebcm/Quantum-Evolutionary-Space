@@ -184,6 +184,7 @@ from qes.events import (
     ReplayReport,
     state_hash,
 )
+from qes.execution import ExecutionBudget, ExecutionStopped
 from qes.expansion import DomainBirthKernel, InfinityRouter, MetaExpansionEngine
 from qes.gpu_compute import (
     GPUCapabilityReport,
@@ -219,6 +220,7 @@ from qes.information_gain import (
 from qes.intelligence import (
     AdaptiveGradientSearch,
     AdaptiveSearchConfig,
+    NoFeasibleSolutionError,
     OptimizationResult,
     optimize,
 )
@@ -426,6 +428,7 @@ from qes.storage_backend import (
     S3StorageBackend,
     StorageBackend,
 )
+from qes.task_queue import RegisteredTaskWorker, SQLiteTaskQueue, StaleLeaseError, TaskLease
 from qes.universe import Universe, UniverseComparison, UniverseTelemetry
 from qes.validation import (
     FailureRecoveryLoop,
@@ -448,6 +451,13 @@ from qes.world import World
 from qes.x_engine import AcrosV12BIE, AcrosV13, ApexI, GeoM, XEnginePipelineResult, x_engine_pipeline
 
 __all__ = [
+    "ExecutionBudget",
+    "ExecutionStopped",
+    "NoFeasibleSolutionError",
+    "RegisteredTaskWorker",
+    "SQLiteTaskQueue",
+    "StaleLeaseError",
+    "TaskLease",
     "Room",
     "MCCStateSpace",
     "DomainNullification",
