@@ -137,10 +137,19 @@ class PostgresTaskQueue:
                 expires_at=%s,attempts=attempts+1,updated_at=%s WHERE task_id=%s""", (owner,token,expires,now,row[0]))
             return TaskLease(row[0],row[1],row[2],json.loads(row[3]),owner,token,expires,row[4]+1)
 
+    def _lock_lease(self, cursor, lease: TaskLease) -> float:
+        cursor.execute(f"SELECT owner,lease_token,status,expires_at FROM {self._tasks} WHERE task_id=%s AND tenant_id=%s FOR UPDATE",
+                       (lease.task_id,lease.tenant_id))
+        row=cursor.fetchone()
+        now=self._now(cursor)  # Check time after any row-lock wait, never before it.
+        if row is None or row[0]!=lease.owner or row[1]!=lease.lease_token or row[2]!='running' or row[3]<=now:
+            raise StaleLeaseError("stale or expired lease")
+        return now
+
     def renew(self, lease: TaskLease, *, lease_seconds: float = 30) -> float:
         seconds = _positive_seconds(lease_seconds)
         with self._transaction() as cursor:
-            now = self._now(cursor)
+            now = self._lock_lease(cursor, lease)
             expires = now+seconds
             cursor.execute(f"""UPDATE {self._tasks} SET expires_at=%s,updated_at=%s WHERE task_id=%s
                 AND tenant_id=%s AND status='running' AND owner=%s AND lease_token=%s AND expires_at>%s""",
@@ -157,7 +166,7 @@ class PostgresTaskQueue:
 
     def _finish(self, lease: TaskLease, status: str, result: str | None, error: str | None) -> None:
         with self._transaction() as cursor:
-            now = self._now(cursor)
+            now = self._lock_lease(cursor, lease)
             cursor.execute(f"""UPDATE {self._tasks} SET status=CASE WHEN %s='queued' AND attempts>=max_attempts
                 THEN 'failed' ELSE %s END,result=%s::jsonb,error=%s,updated_at=%s,owner=NULL,lease_token=NULL,expires_at=NULL
                 WHERE task_id=%s AND tenant_id=%s AND status='running' AND owner=%s AND lease_token=%s AND expires_at>%s""",

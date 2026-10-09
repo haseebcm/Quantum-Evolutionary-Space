@@ -120,6 +120,30 @@ q.close()
         assert queue.get(skewed.task_id)['result']=='scalar result'
         report['database_clock_renewal_and_tenant_fencing']='passed'
 
+        queue.submit('qes.search',{})
+        delayed=queue.claim('delayed',lease_seconds=1)
+        blocker=queue._driver.connect(host)
+        try:
+            with blocker.cursor() as cursor:
+                cursor.execute('SELECT task_id FROM qes_queue_tasks WHERE task_id=%s FOR UPDATE',(delayed.task_id,))
+            with ThreadPoolExecutor(1) as pool:
+                future=pool.submit(queue.complete,delayed,{'too_late':True})
+                time.sleep(1.2)
+                blocker.rollback()
+                try:
+                    future.result(timeout=10)
+                except StaleLeaseError:
+                    pass
+                else:
+                    raise AssertionError('completion accepted after lease expired during lock wait')
+        finally:
+            blocker.close()
+        recovered=queue.claim('replacement')
+        assert recovered.task_id==delayed.task_id
+        queue.complete(recovered,{'fresh_after_lock_wait':True})
+        report['lock_wait_expiry_fencing']='passed'
+
+
         small=PostgresTaskQueue(host,namespace='capacity_test',max_records=1)
         def submit(i):
             client=PostgresTaskQueue(host,namespace='capacity_test',max_records=1)
