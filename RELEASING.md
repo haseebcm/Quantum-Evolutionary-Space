@@ -12,8 +12,8 @@ QES follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 1. Update `CHANGELOG.md`: move the relevant `[Unreleased]` entries under a
    new `## [X.Y.Z] - YYYY-MM-DD` heading.
-2. Bump `version` in `pyproject.toml` to match.
-3. Ensure CI is green on `main` (lint, type check, tests).
+2. Bump `__version__` in `src/qes/_version.py` to match; package metadata reads it.
+3. Ensure CI is green on `main` (lint, type check, tests, all examples and installed wheel). Review the compatibility changes in `docs/production-readiness.md` before selecting the release version.
 4. Commit the version bump: `git commit -m "Release vX.Y.Z"`.
 5. Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 6. Create a GitHub Release from the tag, using the corresponding

@@ -139,6 +139,11 @@ class SDKRunResult:
     steps: int
     telemetry: SpaceTelemetry
 
+    @property
+    def status(self) -> str:
+        """Whether a certified admissible candidate was returned."""
+        return "success" if self.best_state is not None else "no_feasible_solution"
+
 
 class QESClient:
     """Convenience wrapper that assembles a governed QES search in one place.
@@ -237,6 +242,8 @@ class QESClient:
             count=self.population,
             scale=self.branch_scale,
         )
+        for child in children:
+            child.x = np.clip(child.x, child.lower, child.upper)
         self.space.spawn(children)
 
     def dominant_room(self) -> Room | None:
@@ -267,13 +274,16 @@ class QESClient:
     def _best_snapshot(
         self,
     ) -> tuple[str | None, npt.NDArray[np.float64] | None, float | None, float]:
-        rooms = list(self.space.rooms.values())
+        rooms = self.space.active_rooms()
         if not rooms:
             return None, None, None, 0.0
 
         if self._search is None and self._score_fn is None:
             dominant = self.space.dominant_room()
-            if dominant is None:
+            if dominant is None or not self.space.permission_gate.inspect(
+                dominant.x, dominant.lower, dominant.upper,
+                dominant.gates.get("cci_weights"), dominant.couplings,
+            ).admitted:
                 return None, None, None, 0.0
             return dominant.id, dominant.x.copy(), None, dominant.weight
 
@@ -283,16 +293,15 @@ class QESClient:
         scored: list[tuple[Room, npt.NDArray[np.float64], float]] = [
             (room, state, score)
             for room, state, score in ranked
-            if score is not None
+            if score is not None and self.space.permission_gate.inspect(
+                state, room.lower, room.upper, room.gates.get("cci_weights"), room.couplings
+            ).admitted
         ]
         if scored:
             room, best_state, best_score = min(scored, key=lambda item: item[2])
             return room.id, best_state.copy(), best_score, room.weight
 
-        dominant = self.space.dominant_room()
-        if dominant is None:
-            return None, None, None, 0.0
-        return dominant.id, dominant.x.copy(), None, dominant.weight
+        return None, None, None, 0.0
 
     def _record_pattern(self, telemetry: SpaceTelemetry) -> None:
         room_id, best_state, best_score, permission_margin = self._best_snapshot()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qes"
-version = "1.3.0"
+dynamic = ["version"]
 description = "QES — Quantum Evolutionary Space: a general-purpose framework for governed possibility-space computation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,10 +44,10 @@ dependencies = [
 qes-worker = "qes.worker:main"
 
 [project.urls]
-Homepage = "https://github.com/mhaseeb112/H11-Quantum-Evolutionary-Space"
-Repository = "https://github.com/mhaseeb112/H11-Quantum-Evolutionary-Space"
-Documentation = "https://github.com/mhaseeb112/H11-Quantum-Evolutionary-Space/blob/main/docs/QES-architecture.md"
-Issues = "https://github.com/mhaseeb112/H11-Quantum-Evolutionary-Space/issues"
+Homepage = "https://github.com/haseebcm/Quantum-Evolutionary-Space"
+Repository = "https://github.com/haseebcm/Quantum-Evolutionary-Space"
+Documentation = "https://github.com/haseebcm/Quantum-Evolutionary-Space/blob/main/docs/QES-architecture.md"
+Issues = "https://github.com/haseebcm/Quantum-Evolutionary-Space/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -67,6 +67,12 @@ runtime = [
     "qes[redis,postgres]",
 ]
 
+[tool.setuptools.dynamic]
+version = { attr = "qes._version.__version__" }
+
+[tool.setuptools.package-data]
+qes = ["py.typed"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -85,13 +91,13 @@ skip_empty = true
 line-length = 110
 target-version = "py310"
 src = ["src"]
+
+[tool.ruff.lint]
 ignore = ["E501"]
 select = ["E", "F", "I", "UP", "B"]
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-
 [tool.mypy]
+check_untyped_defs = true
 files = ["src/qes"]
 ignore_missing_imports = true
 warn_unused_ignores = true

@@ -817,4 +817,4 @@ __all__ = [
     "aggregate_weights_stats",
 ]
 
-__version__ = "1.4.0"
+from qes._version import __version__ as __version__

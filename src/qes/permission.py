@@ -116,6 +116,13 @@ class GenesisPermission:
         self.eps_phi = eps_phi
         self.m_min = m_min
 
+    def inspect(
+        self, x: np.ndarray, lower: np.ndarray, upper: np.ndarray,
+        w: np.ndarray | None = None, coupling: np.ndarray | None = None,
+    ) -> PermissionResult:
+        """Validate a candidate without adapting the gate or changing its history."""
+        return GenesisPermission.evaluate(self, x, lower, upper, w, coupling)
+
     def evaluate(
         self,
         x: np.ndarray,

@@ -96,6 +96,8 @@ class AdaptiveSearchConfig:
             if not np.isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be finite and lie in [0, 1]")
             setattr(self, name, value)
+        if self.adam_beta1 == 1.0 or self.adam_beta2 == 1.0:
+            raise ValueError("Adam beta values must be less than 1")
         if self.max_step < self.min_step:
             raise ValueError("max_step must be >= min_step")
         if not self.min_step <= self.step_size <= self.max_step:
@@ -197,7 +199,10 @@ class AdaptiveGradientSearch:
             raise ValueError("objective must return a finite scalar")
         return value
 
-    def _estimate_gradient(self, x: np.ndarray, eps: float) -> np.ndarray:
+    def _estimate_gradient(
+        self, x: np.ndarray, eps: float, lower: np.ndarray | None = None,
+        upper: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Central-difference gradient estimate: O(eps^2) accurate, 2*dim evals."""
         if not np.isfinite(eps) or eps <= 0.0:
             raise ValueError("eps must be finite and > 0")
@@ -208,9 +213,18 @@ class AdaptiveGradientSearch:
         offsets = np.eye(x.shape[0], dtype=float) * eps
         grad = np.empty_like(x)
         for index, offset in enumerate(offsets):
-            forward = self._evaluate_objective(x + offset)
-            backward = self._evaluate_objective(x - offset)
-            grad[index] = (forward - backward) / (2.0 * eps)
+            plus = x + offset
+            minus = x - offset
+            if lower is not None and upper is not None:
+                plus = np.clip(plus, lower, upper)
+                minus = np.clip(minus, lower, upper)
+            distance = plus[index] - minus[index]
+            if distance == 0.0:
+                grad[index] = 0.0
+                continue
+            forward = self._evaluate_objective(plus)
+            backward = self._evaluate_objective(minus)
+            grad[index] = (forward - backward) / distance
         return grad
 
     def _adam_step(self, state: _RoomSearchState, x: np.ndarray, grad: np.ndarray) -> np.ndarray:
@@ -257,7 +271,7 @@ class AdaptiveGradientSearch:
 
         use_gradient = self.rng.uniform() < cfg.gradient_prob
         if use_gradient:
-            grad = self._estimate_gradient(room.x, cfg.gradient_eps)
+            grad = self._estimate_gradient(room.x, cfg.gradient_eps, room.lower, room.upper)
             candidate = self._adam_step(state, room.x, grad)
         else:
             candidate = room.x + self.rng.normal(0.0, state.step_size, size=room.dim)
@@ -300,6 +314,10 @@ class AdaptiveGradientSearch:
                 f"room.memory[{self.config.memory_key!r}] must contain a _RoomSearchState instance"
             )
         return state.best_x.copy(), state.best_value
+
+
+class NoFeasibleSolutionError(ValueError):
+    """The search did not produce any candidate admitted by its gate."""
 
 
 @dataclass
@@ -367,6 +385,8 @@ def optimize(
         step_fn=search,
         dt=1.0,
     )
+    for child in children:
+        child.x = np.clip(child.x, child.lower, child.upper)
     space.spawn(children)
 
     iterations_run = 0
@@ -376,11 +396,20 @@ def optimize(
         if not space.active_rooms():
             break
 
-    candidates = [search.best_known(room) for room in space.rooms.values()]
+    candidates = []
+    for room in space.active_rooms():
+        candidate, value = search.best_known(room)
+        if space.permission_gate.inspect(
+            candidate, room.lower, room.upper, room.gates.get("cci_weights"), room.couplings,
+        ).admitted:
+            candidates.append((candidate, value))
+    if not children and space.permission_gate.inspect(
+        seed.x, seed.lower, seed.upper, seed.gates.get("cci_weights"), seed.couplings,
+    ).admitted:
+        candidates.append((seed.x.copy(), counted_objective(seed.x)))
     if not candidates:
-        best_x, best_value = seed.x.copy(), counted_objective(seed.x)
-    else:
-        best_x, best_value = min(candidates, key=lambda item: item[1])
+        raise NoFeasibleSolutionError("no admissible solution found")
+    best_x, best_value = min(candidates, key=lambda item: item[1])
 
     return OptimizationResult(
         best_x=best_x,
@@ -395,5 +424,6 @@ __all__ = [
     "AdaptiveSearchConfig",
     "AdaptiveGradientSearch",
     "OptimizationResult",
+    "NoFeasibleSolutionError",
     "optimize",
 ]

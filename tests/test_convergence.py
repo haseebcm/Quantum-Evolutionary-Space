@@ -25,7 +25,9 @@ def test_normalized_entropy_is_one_for_uniform_distribution():
 
 
 def test_entropy_zero_when_all_weights_non_positive():
-    assert qes_entropy([0.0, 0.0, -1.0]) == 0.0
+    assert qes_entropy([0.0, 0.0]) == 0.0
+    with pytest.raises(ValueError):
+        qes_entropy([0.0, 0.0, -1.0])
 
 
 def test_normalized_entropy_is_zero_for_single_weight():

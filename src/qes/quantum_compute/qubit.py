@@ -33,6 +33,21 @@ class ComputationalQubit:
     drift: np.ndarray = field(default_factory=lambda: np.zeros(1, dtype=float))
     weights: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0], dtype=complex))
 
+    def _quantum_state(self) -> np.ndarray:
+        """Normalize a finite vector for physical-state diagnostics.
+
+        primary remains an arbitrary computational vector; physical methods
+        operate on its normalized ray and reject zero/invalid vectors.
+        """
+        state = np.asarray(self.primary, dtype=complex)
+        if state.ndim != 1 or state.size == 0 or not np.all(np.isfinite(state)):
+            raise ValueError("primary must be a finite nonempty state vector")
+        scale = float(np.max(np.abs(state)))
+        if scale == 0:
+            raise ValueError("zero state has no normalized quantum representation")
+        scaled = state / scale
+        return scaled / np.linalg.norm(scaled)
+
     def normalize_weights(self) -> None:
         """Normalize weights so that sum(|w|^2) == 1."""
         magsq = np.sum(np.abs(self.weights) ** 2)
@@ -101,7 +116,8 @@ class ComputationalQubit:
         np.ndarray
             The density matrix (outer product of the primary state).
         """
-        return np.outer(self.primary, np.conjugate(self.primary))
+        state = self._quantum_state()
+        return np.outer(state, state.conj())
 
     def to_bloch(self) -> tuple[float, float]:
         """Get the Bloch sphere coordinates (theta, phi) for a 2D primary state.
@@ -115,10 +131,7 @@ class ComputationalQubit:
             raise ValueError("Bloch sphere representation is only valid for 2D states.")
         
         # Ensure state is normalized for Bloch sphere mapping
-        norm_val = np.linalg.norm(self.primary)
-        if norm_val == 0:
-            raise ValueError("Zero state cannot be mapped to Bloch sphere.")
-        state = self.primary / norm_val
+        state = self._quantum_state()
         
         alpha, beta = state
         theta = 2 * np.arccos(np.clip(np.abs(alpha), 0, 1))
@@ -168,8 +181,10 @@ class ComputationalQubit:
         float
             Fidelity |<self|other>|^2.
         """
-        inner_prod = self.inner(other)
-        return float(np.abs(inner_prod) ** 2)
+        left, right = self._quantum_state(), other._quantum_state()
+        if left.shape != right.shape:
+            raise ValueError("state dimensions must match")
+        return float(np.clip(np.abs(np.vdot(left, right)) ** 2, 0.0, 1.0))
 
     def trace_distance(self, other: ComputationalQubit) -> float:
         """Calculate the trace distance between this and another qubit.
@@ -226,7 +241,14 @@ class ComputationalQubit:
         ComputationalQubit
             A new qubit instance.
         """
+        rho = np.asarray(rho, dtype=complex)
+        if (rho.ndim != 2 or rho.shape[0] != rho.shape[1] or rho.size == 0
+                or not np.all(np.isfinite(rho)) or not np.allclose(rho, rho.conj().T)
+                or not np.isclose(np.trace(rho), 1.0)):
+            raise ValueError("rho must be a finite Hermitian trace-one density matrix")
         eigenvalues, eigenvectors = np.linalg.eigh(rho)
+        if np.min(eigenvalues) < -1e-10 or not np.isclose(eigenvalues[-1], 1.0):
+            raise ValueError("only pure positive density matrices are supported")
         # Get the eigenvector corresponding to the largest eigenvalue
         max_idx = np.argmax(eigenvalues)
         primary = eigenvectors[:, max_idx]
@@ -282,11 +304,7 @@ class ComputationalQubit:
             rng = np.random.default_rng()
             
         # Calculate probabilities from primary state
-        norm_val = np.linalg.norm(self.primary)
-        if norm_val == 0:
-            raise ValueError("Cannot measure a zero state.")
-            
-        probs = np.abs(self.primary) ** 2 / (norm_val ** 2)
+        probs = np.abs(self._quantum_state()) ** 2
         
         # Sample an index based on probabilities
         index = int(rng.choice(len(probs), p=probs))

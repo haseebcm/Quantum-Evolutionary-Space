@@ -35,13 +35,29 @@ jobs:
       - name: Test with coverage
         run: pytest -q --cov=qes --cov-report=term-missing
 
-      - name: Run examples
+      - name: Run all shipped examples
         run: |
-          python examples/basic_run.py
-          python examples/control_policy_search.py
-          python examples/design_space_search.py
-          python examples/intelligent_universe.py
-          python examples/scipy_baseline_benchmark.py
+          for example in examples/*.py; do
+            timeout 60s python "$example"
+          done
+
+  installed-wheel:
+    name: Validate installed wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build
+      - run: python -m build
+      - run: python -m pip install dist/*.whl pytest scipy
+      - name: Test installed distribution outside source import path
+        run: |
+          python -m pytest -q
+          cd "$(mktemp -d)"
+          python -c "import importlib.metadata, qes, qes.quantum_compute; from importlib.resources import files; assert importlib.metadata.version('qes') == qes.__version__ == qes.quantum_compute.__version__; assert files('qes').joinpath('py.typed').is_file()"
+          qes-worker --cycles 1 --interval 0
 
   benchmark:
     name: Benchmark regression gate

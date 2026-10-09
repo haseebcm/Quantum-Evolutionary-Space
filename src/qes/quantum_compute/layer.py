@@ -1,6 +1,7 @@
 """Per-layer manager for one QSEE-11L evolutionary layer."""
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -92,19 +93,22 @@ class Layer:
         """Create a full checkpoint of the layer's state."""
         return {
             "name": self.name,
+            "qubit": self.qubit.copy(),
             "qubit_weights": self.qubit.weights.copy() if hasattr(self.qubit, "weights") and self.qubit.weights is not None else None,
             "step_count": self.step_count,
-            "history": self.history.copy(),
+            "history": copy.deepcopy(self.history),
             "fitness_history": self.fitness_history.copy(),
         }
 
     def restore(self, checkpoint: dict) -> None:
         """Restore the layer's state from a checkpoint."""
         self.name = checkpoint["name"]
+        if "qubit" in checkpoint:
+            self.qubit = checkpoint["qubit"].copy()
         if checkpoint["qubit_weights"] is not None:
             self.qubit.weights = np.array(checkpoint["qubit_weights"])
         self.step_count = checkpoint["step_count"]
-        self.history = checkpoint["history"].copy()
+        self.history = copy.deepcopy(checkpoint["history"])
         self.fitness_history = checkpoint["fitness_history"].copy()
 
     def stats(self) -> dict:

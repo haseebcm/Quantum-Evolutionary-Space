@@ -30,9 +30,6 @@ from .quantum_gates import (
     controlled,
     cy_matrix,
     cz_matrix,
-    expand_single_qubit_gate,
-    expand_three_qubit_gate,
-    expand_two_qubit_gate,
     fredkin_matrix,
     swap_matrix,
     toffoli_matrix,
@@ -43,12 +40,33 @@ from .quantum_gates import (
 class GateOp:
     name: str
     matrix: np.ndarray | None
+    targets: tuple[int, ...] | None = None
 
 
 @dataclass
 class Circuit:
     num_qubits: int
     ops: list[GateOp] = field(default_factory=list)
+    max_state_bytes: int = 64 * 1024 * 1024
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.num_qubits, int) or isinstance(self.num_qubits, bool) or self.num_qubits < 1:
+            raise ValueError("num_qubits must be a positive integer")
+        if not isinstance(self.max_state_bytes, int) or self.max_state_bytes <= 0:
+            raise ValueError("max_state_bytes must be a positive integer")
+        # Check bit length before shifting to bound even maliciously large counts.
+        if self.num_qubits > self.max_state_bytes.bit_length() or 16 * (1 << self.num_qubits) > self.max_state_bytes:
+            raise ValueError("state vector exceeds configured memory limit")
+
+    def _apply_local(self, state: np.ndarray, op: GateOp) -> np.ndarray:
+        if op.targets is None:
+            return op.matrix @ state
+        targets = op.targets
+        self._check_qubits(*targets)
+        order = list(targets) + [q for q in range(self.num_qubits) if q not in targets]
+        tensor = state.reshape([2] * self.num_qubits).transpose(order)
+        evolved = op.matrix @ tensor.reshape(1 << len(targets), -1)
+        return evolved.reshape([2] * self.num_qubits).transpose(np.argsort(order)).reshape(-1)
 
     def _check_qubit(self, q: int) -> None:
         if not (0 <= q < self.num_qubits):
@@ -63,117 +81,120 @@ class Circuit:
     def apply_x(self, target: int) -> None:
         """Apply an X (NOT) gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(X, target, self.num_qubits)
-        self.ops.append(GateOp(f"X_{target}", mat))
+        mat = X
+        self.ops.append(GateOp(f"X_{target}", mat, (target,)))
 
     def apply_y(self, target: int) -> None:
         """Apply a Y gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Y, target, self.num_qubits)
-        self.ops.append(GateOp(f"Y_{target}", mat))
+        mat = Y
+        self.ops.append(GateOp(f"Y_{target}", mat, (target,)))
 
     def apply_z(self, target: int) -> None:
         """Apply a Z (Phase-flip) gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Z, target, self.num_qubits)
-        self.ops.append(GateOp(f"Z_{target}", mat))
+        mat = Z
+        self.ops.append(GateOp(f"Z_{target}", mat, (target,)))
 
     def apply_h(self, target: int) -> None:
         """Apply a Hadamard gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(H, target, self.num_qubits)
-        self.ops.append(GateOp(f"H_{target}", mat))
+        mat = H
+        self.ops.append(GateOp(f"H_{target}", mat, (target,)))
 
     def apply_s(self, target: int) -> None:
         """Apply an S (Phase) gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(S, target, self.num_qubits)
-        self.ops.append(GateOp(f"S_{target}", mat))
+        mat = S
+        self.ops.append(GateOp(f"S_{target}", mat, (target,)))
 
     def apply_t(self, target: int) -> None:
         """Apply a T (pi/8) gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(T, target, self.num_qubits)
-        self.ops.append(GateOp(f"T_{target}", mat))
+        mat = T
+        self.ops.append(GateOp(f"T_{target}", mat, (target,)))
 
     def apply_sx(self, target: int) -> None:
         """Apply an SX (sqrt-X) gate to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(SX, target, self.num_qubits)
-        self.ops.append(GateOp(f"SX_{target}", mat))
+        mat = SX
+        self.ops.append(GateOp(f"SX_{target}", mat, (target,)))
 
     def apply_rx(self, target: int, theta: float) -> None:
         """Apply an Rx rotation by theta to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Rx(theta), target, self.num_qubits)
-        self.ops.append(GateOp(f"Rx({theta:.2f})_{target}", mat))
+        mat = Rx(theta)
+        self.ops.append(GateOp(f"Rx({theta:.2f})_{target}", mat, (target,)))
 
     def apply_ry(self, target: int, theta: float) -> None:
         """Apply an Ry rotation by theta to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Ry(theta), target, self.num_qubits)
-        self.ops.append(GateOp(f"Ry({theta:.2f})_{target}", mat))
+        mat = Ry(theta)
+        self.ops.append(GateOp(f"Ry({theta:.2f})_{target}", mat, (target,)))
 
     def apply_rz(self, target: int, theta: float) -> None:
         """Apply an Rz rotation by theta to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Rz(theta), target, self.num_qubits)
-        self.ops.append(GateOp(f"Rz({theta:.2f})_{target}", mat))
+        mat = Rz(theta)
+        self.ops.append(GateOp(f"Rz({theta:.2f})_{target}", mat, (target,)))
 
     def apply_phase(self, target: int, theta: float) -> None:
         """Apply a Phase rotation by theta to the target qubit."""
         self._check_qubit(target)
-        mat = expand_single_qubit_gate(Phase(theta), target, self.num_qubits)
-        self.ops.append(GateOp(f"Phase({theta:.2f})_{target}", mat))
+        mat = Phase(theta)
+        self.ops.append(GateOp(f"Phase({theta:.2f})_{target}", mat, (target,)))
 
     def apply_cnot(self, control: int, target: int) -> None:
         """Apply a Controlled-NOT gate."""
         self._check_qubits(control, target)
         two = cnot_matrix()
-        mat = expand_two_qubit_gate(two, control, target, self.num_qubits)
-        self.ops.append(GateOp(f"CNOT_{control}_{target}", mat))
+        mat = two
+        self.ops.append(GateOp(f"CNOT_{control}_{target}", mat, (control, target)))
 
     def apply_cz(self, control: int, target: int) -> None:
         """Apply a Controlled-Z gate."""
         self._check_qubits(control, target)
         two = cz_matrix()
-        mat = expand_two_qubit_gate(two, control, target, self.num_qubits)
-        self.ops.append(GateOp(f"CZ_{control}_{target}", mat))
+        mat = two
+        self.ops.append(GateOp(f"CZ_{control}_{target}", mat, (control, target)))
 
     def apply_cy(self, control: int, target: int) -> None:
         """Apply a Controlled-Y gate."""
         self._check_qubits(control, target)
         two = cy_matrix()
-        mat = expand_two_qubit_gate(two, control, target, self.num_qubits)
-        self.ops.append(GateOp(f"CY_{control}_{target}", mat))
+        mat = two
+        self.ops.append(GateOp(f"CY_{control}_{target}", mat, (control, target)))
 
     def apply_swap(self, q1: int, q2: int) -> None:
         """Apply a SWAP gate."""
         self._check_qubits(q1, q2)
         two = swap_matrix()
-        mat = expand_two_qubit_gate(two, q1, q2, self.num_qubits)
-        self.ops.append(GateOp(f"SWAP_{q1}_{q2}", mat))
+        mat = two
+        self.ops.append(GateOp(f"SWAP_{q1}_{q2}", mat, (q1, q2)))
 
     def apply_controlled_u(self, control: int, target: int, gate: np.ndarray) -> None:
         """Apply an arbitrary Controlled-U gate."""
         self._check_qubits(control, target)
+        gate = np.asarray(gate, dtype=complex)
+        if gate.shape != (2, 2) or not np.all(np.isfinite(gate)) or not np.allclose(gate.conj().T @ gate, np.eye(2)):
+            raise ValueError("controlled gate must be a finite 2x2 unitary")
         c_gate = controlled(gate)
-        mat = expand_two_qubit_gate(c_gate, control, target, self.num_qubits)
-        self.ops.append(GateOp(f"CU_{control}_{target}", mat))
+        mat = c_gate
+        self.ops.append(GateOp(f"CU_{control}_{target}", mat, (control, target)))
 
     def apply_toffoli(self, c1: int, c2: int, target: int) -> None:
         """Apply a Toffoli (CCX) gate."""
         self._check_qubits(c1, c2, target)
         three = toffoli_matrix()
-        mat = expand_three_qubit_gate(three, c1, c2, target, self.num_qubits)
-        self.ops.append(GateOp(f"CCX_{c1}_{c2}_{target}", mat))
+        mat = three
+        self.ops.append(GateOp(f"CCX_{c1}_{c2}_{target}", mat, (c1, c2, target)))
 
     def apply_fredkin(self, control: int, t1: int, t2: int) -> None:
         """Apply a Fredkin (CSWAP) gate."""
         self._check_qubits(control, t1, t2)
         three = fredkin_matrix()
-        mat = expand_three_qubit_gate(three, control, t1, t2, self.num_qubits)
-        self.ops.append(GateOp(f"CSWAP_{control}_{t1}_{t2}", mat))
+        mat = three
+        self.ops.append(GateOp(f"CSWAP_{control}_{t1}_{t2}", mat, (control, t1, t2)))
 
     def barrier(self) -> None:
         """Adds a visual barrier (no-op)."""
@@ -185,18 +206,20 @@ class Circuit:
             state = zero_state(self.num_qubits)
         s = np.asarray(state, dtype=complex)
         expected_dim = 1 << self.num_qubits
-        if s.size != expected_dim:
+        if s.shape != (expected_dim,) or not np.all(np.isfinite(s)):
             raise ValueError(
                 f"state vector has size {s.size} but expected {expected_dim} for {self.num_qubits} qubits"
             )
         for op in self.ops:
             if op.matrix is not None:
-                s = op.matrix.dot(s)
+                s = self._apply_local(s, op)
         return s
 
     def measure_probabilities(self, state: np.ndarray) -> np.ndarray:
         """Return the probability distribution of outcomes for the given state."""
         s = np.asarray(state, dtype=complex)
+        if s.shape != (1 << self.num_qubits,) or not np.all(np.isfinite(s)):
+            raise ValueError("state must be a finite vector matching the circuit")
         probs = np.abs(s) ** 2
         total = probs.sum()
         if total == 0:
@@ -295,24 +318,26 @@ class Circuit:
         """Compose this circuit with another by appending its operations."""
         if self.num_qubits != other.num_qubits:
             raise ValueError("Circuits must have the same number of qubits to be composed")
-        c = Circuit(self.num_qubits)
+        c = Circuit(self.num_qubits, max_state_bytes=self.max_state_bytes)
         c.ops = self.ops + other.ops
         return c
 
     def repeat(self, n: int) -> Circuit:
         """Return a new circuit repeating the operations n times."""
-        c = Circuit(self.num_qubits)
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            raise ValueError("repeat count must be a nonnegative integer")
+        c = Circuit(self.num_qubits, max_state_bytes=self.max_state_bytes)
         c.ops = self.ops * n
         return c
 
     def inverse(self) -> Circuit:
         """Return a new circuit applying the inverse operations in reverse order."""
-        c = Circuit(self.num_qubits)
+        c = Circuit(self.num_qubits, max_state_bytes=self.max_state_bytes)
         for op in reversed(self.ops):
             if op.matrix is None:
                 c.ops.append(op)
             else:
-                c.ops.append(GateOp(op.name + "_dag", op.matrix.conj().T))
+                c.ops.append(GateOp(op.name + "_dag", op.matrix.conj().T, op.targets))
         return c
 
     def draw(self) -> str:

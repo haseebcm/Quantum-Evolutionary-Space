@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Correctness and compatibility changes
+- Return only certified admissible SDK winners; expose `SDKRunResult.status`.
+  `optimize()` raises `NoFeasibleSolutionError` when no candidate is admitted.
+- Normalize nonnegative weights for entropy; zero-total populations have no
+  concentration. Negative/non-finite weights are rejected.
+- Isolate nested room metadata and stateful space strategies/gates when cloning;
+  restore strategy/gate snapshots and invalidate active-room caches.
+- Bound finite-difference probes and initial optimizer populations to the domain;
+  reject Adam decay parameters equal to one.
+- Retry result persistence separately from successful job execution; expose
+  permanent persistence failures without replaying handler effects.
+- Normalize physical qubit diagnostics and validate pure density matrices.
+  Store local circuit operators rather than expanded dense gate matrices.
+- Quantum serialization version 2 uses data-only JSON for binary payloads and
+  explicit diff operation envelopes. Legacy pickle payloads are rejected.
+- Unify package versions, ship typing metadata, fix the closure example and add
+  installed-wheel/all-example CI checks. Quantum APIs remain experimental.
+
+See `docs/production-readiness.md` for migration and remaining service work.
+
+
 ### Added
 - `src/qes/real_distributed.py`: real multi-process, localhost-TCP
   distributed task execution (`Coordinator`, `WorkerProcess`,

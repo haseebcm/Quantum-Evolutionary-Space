@@ -6,12 +6,12 @@ simulation, ACROS correction, evolutionary dynamics, QEL streams, QSEE-11L
 coordination, synchronization, and serialization utilities.
 
 These are software-only abstractions for layered possibility-space evolution
-and are explicitly not physical quantum code. Every module is production-grade
-with comprehensive type hints, docstrings, and backward-compatible APIs.
+and are explicitly not physical quantum code. The package remains experimental; individual numerical and serialization
+contracts are tested, but the complete public surface is not yet certified.
 """
 from __future__ import annotations
 
-__version__ = "2.0.0"
+from qes._version import __version__
 
 # ── Qubit & State Representations ────────────────────────────────────────────
 # ── ACROS Correction ─────────────────────────────────────────────────────────

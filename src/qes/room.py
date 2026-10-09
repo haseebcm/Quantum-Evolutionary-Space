@@ -5,6 +5,7 @@ A room needs more than a state vector — it carries its state, its laws
 """
 from __future__ import annotations
 
+import copy
 import itertools
 from dataclasses import dataclass, field
 from typing import Any
@@ -99,12 +100,12 @@ class Room:
             lower=self.lower.copy(),
             upper=self.upper.copy(),
             activation=self.activation.copy(),
-            equations=list(self.equations),
-            theta=dict(self.theta),
-            gates=dict(self.gates),
+            equations=copy.deepcopy(self.equations),
+            theta=copy.deepcopy(self.theta),
+            gates=copy.deepcopy(self.gates),
             couplings=None if self.couplings is None else self.couplings.copy(),
-            compute=dict(self.compute),
-            memory=dict(self.memory),
+            compute=copy.deepcopy(self.compute),
+            memory=copy.deepcopy(self.memory),
             lineage=self.lineage + [self.id],
             state="Seed",
             weight=self.weight,

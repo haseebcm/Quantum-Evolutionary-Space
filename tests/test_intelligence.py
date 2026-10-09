@@ -315,16 +315,11 @@ def test_optimize_rejects_invalid_inputs(
 def test_optimize_breaks_when_all_rooms_collapse_and_falls_back_when_population_is_empty():
     seed = make_room(np.array([5.0]), dim=1)
 
-    collapsed = optimize(
-        sphere,
-        seed,
-        iterations=5,
-        population=2,
-        permission_theta=0.0,
-        rng=np.random.default_rng(16),
-    )
-    assert collapsed.iterations == 1
-    assert collapsed.survivors == 0
+    with pytest.raises(ValueError, match="no admissible solution"):
+        optimize(
+            sphere, seed, iterations=5, population=2, permission_theta=0.0,
+            rng=np.random.default_rng(16),
+        )
 
     empty = optimize(sphere, seed, iterations=0, population=0, rng=np.random.default_rng(17))
     assert np.allclose(empty.best_x, seed.x)

@@ -61,6 +61,8 @@ class QESSpace:
         dt: float = 1.0,
         max_workers: int | None = None,
     ):
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError("dt must be finite and positive")
         self.permission_gate = permission_gate
         self.domain = domain
         self.step_fn = step_fn
@@ -79,6 +81,8 @@ class QESSpace:
     # Generation (G)
     # ------------------------------------------------------------------
     def add_room(self, room: Room) -> None:
+        if room.id in self.rooms:
+            raise ValueError(f"duplicate room id: {room.id}")
         room.state = "Active" if room.state == "Seed" else room.state
         self.rooms[room.id] = room
         self._dsa[room.id] = DSA()
@@ -156,6 +160,11 @@ class QESSpace:
     def select(self, survivors_per_kind: int | None = None,
                signature_fn: Callable[[Room], object] | None = None) -> None:
         """Prune surviving rooms; optionally keep only the top-N per signature kind."""
+        if survivors_per_kind is not None and (
+            not isinstance(survivors_per_kind, int) or isinstance(survivors_per_kind, bool)
+            or survivors_per_kind < 0
+        ):
+            raise ValueError("survivors_per_kind must be a nonnegative integer")
         active = self.active_rooms()
         if not active:
             return
@@ -208,7 +217,7 @@ class QESSpace:
     def active_rooms(self) -> list:
         if self._active_cache is None:
             self._active_cache = [r for r in self.rooms.values() if r.state == "Active"]
-        return self._active_cache
+        return list(self._active_cache)
 
     def collapsed_rooms(self) -> list:
         return [r for r in self.rooms.values() if r.state == "Collapsed"]
@@ -252,19 +261,11 @@ class QESSpace:
     def clone(self) -> QESSpace:
         """Deep-copy this whole space (rooms, DSA trackers, history) so it can
         diverge independently -- reality branching promoted to the space level."""
-        clone = QESSpace(
-            permission_gate=self.permission_gate,
-            domain=self.domain,
-            step_fn=self.step_fn,
-            dt=self.dt,
-            max_workers=self.max_workers,
-        )
-        clone.rooms = copy.deepcopy(self.rooms)
-        clone._dsa = copy.deepcopy(self._dsa)
-        clone.time = self.time
-        clone.total_generated = self.total_generated
-        clone.total_collapsed = self.total_collapsed
-        clone.history = list(self.history)
+        # deepcopy preserves aliases within the branch (e.g. strategy RNG state)
+        # while isolating it from the original. Plain functions/closures remain
+        # shared; callers must supply stateless callbacks or cloneable objects.
+        clone = copy.deepcopy(self)
+        clone._active_cache = None
         return clone
 
     def snapshot(self) -> dict:
@@ -275,7 +276,11 @@ class QESSpace:
             "time": self.time,
             "total_generated": self.total_generated,
             "total_collapsed": self.total_collapsed,
-            "history": list(self.history),
+            "history": copy.deepcopy(self.history),
+            "permission_gate": copy.deepcopy(self.permission_gate),
+            "domain": copy.deepcopy(self.domain),
+            "step_fn": copy.deepcopy(self.step_fn),
+            "dt": self.dt,
         }
 
     def restore(self, snapshot: dict) -> None:
@@ -285,4 +290,9 @@ class QESSpace:
         self.time = snapshot["time"]
         self.total_generated = snapshot["total_generated"]
         self.total_collapsed = snapshot["total_collapsed"]
-        self.history = list(snapshot["history"])
+        self.history = copy.deepcopy(snapshot["history"])
+        self.permission_gate = copy.deepcopy(snapshot.get("permission_gate", self.permission_gate))
+        self.domain = copy.deepcopy(snapshot.get("domain", self.domain))
+        self.step_fn = copy.deepcopy(snapshot.get("step_fn", self.step_fn))
+        self.dt = snapshot.get("dt", self.dt)
+        self._active_cache = None

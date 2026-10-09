@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 try:  # pragma: no cover - exercised indirectly via optional-dependency tests
     import redis as _redis_module
@@ -33,7 +34,7 @@ _id_counter = itertools.count(1)
 
 
 def _next_job_id() -> str:
-    return f"job-{next(_id_counter):05d}"
+    return f"job-{uuid4().hex}"
 
 
 @dataclass
@@ -333,6 +334,8 @@ class RuntimeScheduler:
         self.max_workers = max_workers if max_workers > 0 else 1
         self.store = store or RuntimeStore()
         self._queue: list[RuntimeJob] = []
+        self._state_lock = threading.Lock()
+        self._running = 0
 
     @property
     def queue(self) -> list[RuntimeJob]:
@@ -388,11 +391,13 @@ class RuntimeScheduler:
         records = self.store.snapshot().values()
         completed = sum(1 for rec in records if rec.get("status") == "completed")
         failed = sum(1 for rec in records if rec.get("status") == "failed")
-        total = queued + completed + failed
+        with self._state_lock:
+            running = self._running
+        total = queued + running + completed + failed
         success_rate = 0.0 if total == 0 else completed / max(total, 1)
         return RuntimeTelemetry(
             queued=queued,
-            running=0,
+            running=running,
             completed=completed,
             failed=failed,
             total=total,
@@ -400,38 +405,48 @@ class RuntimeScheduler:
         )
 
     def _run_single_job(self, job: RuntimeJob) -> None:
+        with self._state_lock:
+            self._running += 1
+        try:
+            self._execute_and_persist(job)
+        finally:
+            with self._state_lock:
+                self._running -= 1
+
+    def _execute_and_persist(self, job: RuntimeJob) -> None:
         max_retries = int(job.metadata.get("retries", 0))
+        # Only handler failures may retry execution. Persistence failures must
+        # never replay a handler that may already have performed side effects.
         while True:
             try:
                 result = job.execute()
-                self.store.put(
-                    job.job_id,
-                    {
-                        "name": job.name,
-                        "status": job.status,
-                        "priority": job.priority,
-                        "metadata": job.metadata,
-                        "result": result,
-                        "attempts": job.attempts,
-                    },
-                )
-                return
+                record = {
+                    "name": job.name, "status": job.status,
+                    "priority": job.priority, "metadata": job.metadata,
+                    "result": result, "attempts": job.attempts,
+                }
+                break
             except Exception as exc:
                 if job.attempts > max_retries:
-                    self.store.put(
-                        job.job_id,
-                        {
-                            "name": job.name,
-                            "status": "failed",
-                            "priority": job.priority,
-                            "metadata": job.metadata,
-                            "error": f"{type(exc).__name__}: {exc}",
-                            "attempts": job.attempts,
-                        },
-                    )
-                    return
+                    record = {
+                        "name": job.name, "status": "failed",
+                        "priority": job.priority, "metadata": job.metadata,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "attempts": job.attempts,
+                    }
+                    break
                 job.status = "retrying"
                 job.error = str(exc)
+
+        for persistence_attempt in range(max_retries + 1):
+            try:
+                self.store.put(job.job_id, record)
+                return
+            except Exception as exc:
+                if persistence_attempt == max_retries:
+                    job.status = "persist_failed"
+                    job.error = f"{type(exc).__name__}: {exc}"
+                    raise
 
     def run_ready(self, *, limit: int | None = None) -> list[RuntimeJob]:
         """Execute the highest-priority queued jobs and persist their results.

@@ -16,7 +16,7 @@ QES is a domain-agnostic computational framework for exploring, evaluating, and 
 
 ## 🌟 What's New in QES 2.0 (`qes.quantum_compute`)
 
-The `qes.quantum_compute` package has been completely enhanced with **112 exported production-grade primitives**:
+The `qes.quantum_compute` package has been completely enhanced with **112 exported experimental primitives**:
 
 - ⚛️ **Computational Qubit (`qubit.py`)**: Bloch sphere coordinates ($\theta, \phi$), state fidelity, trace/Bures distances, von Neumann entropy, state tomography from density matrix $\rho$, Born-rule probabilistic measurement, and tensor products.
 - 𝄠 **Quantum Gates (`quantum_gates.py`)**: Full unitary matrix representations ($X, Y, Z, H, S, T, \sqrt{X}$, $R_x, R_y, R_z$, Phase), multi-qubit gates (CNOT, CZ, CY, SWAP, Toffoli/CCX, Fredkin/CSWAP), general controlled-unitary builders, gate composition, power exponentiation, and unitarity verification.
@@ -155,7 +155,15 @@ python -m venv .venv
 .\.venv\Scripts\python -m pytest -q --cov=qes --cov-report=term-missing
 ```
 
-The framework ships with a full unit test suite (1392 tests, 1 skipped) achieving ~98% line/branch coverage over the core code paths exercised in this environment. Most modules are unit-tested; a small set of integration-sensitive modules (real_distributed, rpc_fault_tolerance, gpu_compute) include code paths that require real multi-process networking, GPUs, or external services and are explicitly marked as integration-only or conditionally skipped in unit tests. Lint and type checks:
+The framework ships with an extensive unit suite. Run the complete coverage
+command above for the current totals; older core modules and the experimental
+quantum package have different coverage levels. Regression tests now cover
+admissible SDK results, normalized entropy, checkpoint/cache consistency,
+branch isolation, storage retries, and selected quantum/serialization contracts.
+Real GPU, external storage, and multi-host fault handling require separate
+integration validation. See [supported scope and remaining work](docs/production-readiness.md).
+
+Lint and type checks:
 
 ```powershell
 .\.venv\Scripts\python -m ruff check src tests examples
@@ -244,7 +252,7 @@ convergence, and the dominant surviving room).
 | `examples/causal_reality_engine_demo.py` | Causal Reality Engine (Phase 5) | Builds a causal DAG, runs an intervention and a counterfactual, scans perturbation sensitivity, and flags a hidden-variable hypothesis |
 | `examples/reality_marketplace_demo.py` | Reality Marketplace / Resource Economy (Phase 7) | Registers competing reality accounts with utility/risk/novelty/information-gain profiles, clears a compute-bidding round, and updates historical performance |
 | `examples/digital_twin_loop_demo.py` | Digital Twin 2.0 (Phase 9) | Runs the full sensor→fusion→state-estimate→prediction→action loop with online parameter estimation, anomaly detection, calibration, and drift detection on a synthetic system |
-| `examples/accelerator_backend_demo.py` | GPU/Accelerator backend (Phase 10) | Exercises the unified `ComputeBackend` abstraction on CPU and honestly reports GPU backend unavailability in this environment |
+| `examples/gpu_compute_demo.py` | GPU/Accelerator backend (Phase 10) | Exercises the unified `ComputeBackend` abstraction on CPU and honestly reports GPU backend unavailability in this environment |
 | `examples/distributed_qes_demo.py` | Distributed QES (Phase 11) | Runs the in-process worker/controller simulation with heartbeats, leasing, checkpointing, crash recovery, and autoscaling recommendations |
 | `examples/meta_learning_demo.py` | Meta-learning (Phase 13) | Recommends a search strategy from problem features plus historical outcomes and records the new run back into meta-learning history |
 | `examples/self_improvement_demo.py` | Self-improvement pipeline (Phase 14) | Proposes alternative strategy configurations, benchmarks them in a sandbox, applies safety/regression gates, and records an approved configuration in memory |

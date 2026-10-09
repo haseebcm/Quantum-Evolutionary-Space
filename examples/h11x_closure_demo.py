@@ -4,6 +4,8 @@ Run with:  python examples/h11x_closure_demo.py
 """
 from __future__ import annotations
 
+import numpy as np
+
 from qes.closure import CrossDomainVerifier, PermissionClosure, action_selection
 from qes.h11x import H11X
 
@@ -50,13 +52,13 @@ def main() -> None:
     print("selected action:", chosen)
 
     verifier = CrossDomainVerifier(
-        encoder=lambda y: y,
-        decoder=lambda x: x,
+        encoder=lambda y: np.asarray(y, dtype=float),
+        decoder=lambda x: x.copy(),
         transition_fn=lambda x, u, xi: x + u,
-        state_space_check=lambda x: x < 10,
+        state_space_check=lambda x: bool(np.all(x < 10)),
         constraint_fn=lambda x, u: u - 2.0,
     )
-    print("verification:", verifier.verify(y=3.0, u=2.0, xi=0.0))
+    print("verification:", verifier.verify(y=np.array([3.0]), u=2.0, xi=0.0))
 
 
 if __name__ == "__main__":
