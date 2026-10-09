@@ -122,3 +122,40 @@ def test_configured_retention_and_backpressure():
 def test_postgres_rejects_sql_identifier_injection_before_connection():
     with pytest.raises(ValueError, match="SQL identifier"):
         PostgresRuntimeStore(table="jobs; DROP TABLE jobs", connection=object())
+
+
+def test_batched_permission_matches_scalar_for_mixed_feasibility_and_couplings():
+    rng = np.random.default_rng(81)
+    gate = GenesisPermission(theta=2, gamma=0.7, m_min=-0.2)
+    candidates = []
+    for index in range(80):
+        state = rng.uniform(-2, 2, size=3)
+        lower = -np.ones(3)
+        upper = np.ones(3)
+        if index % 7 == 0:
+            lower[1] = upper[1] = 0
+        weights = None if index % 2 else rng.uniform(0, 2, size=3)
+        coupling = None if index % 3 else rng.normal(size=(3, 3))
+        candidates.append((state, lower, upper) if weights is None and coupling is None
+                          else (state, lower, upper, weights, coupling))
+    expected = [gate.evaluate(*candidate) for candidate in candidates]
+    actual = gate.evaluate_batch(candidates)
+    for scalar, batched in zip(expected, actual, strict=True):
+        assert batched.admitted == scalar.admitted
+        assert batched.hard_permission == scalar.hard_permission
+        assert batched.phi == pytest.approx(scalar.phi)
+        assert batched.cci == pytest.approx(scalar.cci)
+        assert batched.margin == pytest.approx(scalar.margin)
+        assert batched.soft_permission == pytest.approx(scalar.soft_permission)
+
+
+@pytest.mark.parametrize("field,bad", [(0, [np.nan]), (1, [2.0]), (3, [-1.0]),
+                                       (4, [[np.inf]])])
+def test_batched_permission_rejects_invalid_inputs(field, bad):
+    sample = (np.zeros(1), -np.ones(1), np.ones(1), None, None)
+    candidates = [sample] * 8
+    changed = list(sample)
+    changed[field] = np.array(bad)
+    candidates[-1] = tuple(changed)
+    with pytest.raises(ValueError):
+        GenesisPermission(1).evaluate_batch(candidates)

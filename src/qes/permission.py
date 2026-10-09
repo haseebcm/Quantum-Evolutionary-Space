@@ -123,7 +123,55 @@ class GenesisPermission:
 
     def evaluate_batch(self, candidates: list[tuple]) -> list[PermissionResult]:
         """Evaluate candidates using the gate's documented population policy."""
+        # Preserve custom gate overrides. Small or heterogeneous populations use
+        # the scalar path; batching low-dimensional populations avoids repeated
+        # NumPy dispatch without weakening validation at the public boundary.
+        if len(candidates) >= 8 and type(self).evaluate is GenesisPermission.evaluate and all(
+            3 <= len(candidate) <= 5 for candidate in candidates
+        ):
+            dimensions = [np.asarray(candidate[0]).shape for candidate in candidates]
+            if all(shape == dimensions[0] for shape in dimensions) and (
+                len(dimensions[0]) == 1 and 0 < dimensions[0][0] <= 16
+            ):
+                return self._evaluate_population([
+                    tuple(candidate) + (None,) * (5 - len(candidate)) for candidate in candidates
+                ])
         return [self.evaluate(*candidate) for candidate in candidates]
+
+    def _evaluate_population(self, candidates: list[tuple]) -> list[PermissionResult]:
+        x = np.stack([np.asarray(c[0], dtype=float) for c in candidates])
+        lower = np.stack([np.asarray(c[1], dtype=float) for c in candidates])
+        upper = np.stack([np.asarray(c[2], dtype=float) for c in candidates])
+        if lower.shape != x.shape or upper.shape != x.shape:
+            raise ValueError("permission vectors must share a one-dimensional shape")
+        if not (np.isfinite(x).all() and np.isfinite(lower).all() and np.isfinite(upper).all()):
+            raise ValueError("permission state and bounds must be finite")
+        if (lower > upper).any():
+            raise ValueError("permission bounds require lower <= upper")
+        weights = np.stack([np.ones(x.shape[1]) if c[3] is None else np.asarray(c[3], dtype=float)
+                            for c in candidates])
+        if weights.shape != x.shape or not np.isfinite(weights).all() or (weights < 0).any():
+            raise ValueError("CCI weights must be finite, nonnegative and match the state")
+        coupling = np.stack([np.zeros((x.shape[1], x.shape[1])) if c[4] is None
+                             else np.asarray(c[4], dtype=float) for c in candidates])
+        if coupling.shape != (len(candidates), x.shape[1], x.shape[1]) or not np.isfinite(coupling).all():
+            raise ValueError("coupling must be a finite square matrix matching the state")
+        over = np.maximum(0.0, x - upper)
+        under = np.maximum(0.0, lower - x)
+        exceed = over + under
+        phi = (over ** 2 + under ** 2).sum(axis=1)
+        coupled = np.matmul(coupling, exceed[..., None])[..., 0]
+        cci = (weights * exceed).sum(axis=1) + self.gamma * (coupled ** 2).sum(axis=1)
+        span = upper - lower
+        span = np.where(span == 0, np.finfo(float).eps, span)
+        margin = np.minimum((x - lower) / span, (upper - x) / span).min(axis=1) / (1 + cci)
+        hard = (phi == 0) & (cci < self.theta)
+        soft = np.exp(-self.alpha * phi) * np.exp(-self.beta * np.maximum(0, cci - self.theta))
+        admitted = ((x >= lower) & (x <= upper)).all(axis=1) & (phi <= self.eps_phi) & (
+            cci < self.theta) & (margin >= self.m_min)
+        return [PermissionResult(float(phi[i]), float(cci[i]), float(margin[i]),
+                                 bool(hard[i]), float(soft[i]), bool(admitted[i]))
+                for i in range(len(candidates))]
 
     def inspect(
         self, x: np.ndarray, lower: np.ndarray, upper: np.ndarray,

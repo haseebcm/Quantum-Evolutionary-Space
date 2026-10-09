@@ -72,14 +72,14 @@ class Room:
         arrays = (self.x, self.x_star, self.lower, self.upper, self.activation)
         if self.x.ndim != 1 or self.x.size == 0:
             raise ValueError("room state must be a nonempty one-dimensional vector")
-        if any(value.shape != self.x.shape or not np.all(np.isfinite(value)) for value in arrays):
+        if any(value.shape != self.x.shape or not np.isfinite(value).all() for value in arrays):
             raise ValueError("room vectors must be finite and share the state shape")
-        if np.any(self.lower > self.upper):
+        if (self.lower > self.upper).any():
             raise ValueError("room lower bounds must not exceed upper bounds")
-        if np.any((self.activation < 0) | (self.activation > 1)):
+        if ((self.activation < 0) | (self.activation > 1)).any():
             raise ValueError("room activation must lie in [0, 1]")
         if self.couplings is not None and (
-            self.couplings.shape != (self.dim, self.dim) or not np.all(np.isfinite(self.couplings))
+            self.couplings.shape != (self.dim, self.dim) or not np.isfinite(self.couplings).all()
         ):
             raise ValueError("room coupling matrix must be finite and square with the state dimension")
 
