@@ -10,13 +10,16 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 
+from qes.postgres_queue import PostgresTaskQueue
 from qes.runtime import DistributedRuntime, SQLiteRuntimeStore
 from qes.sdk import QESClient
 from qes.task_queue import RegisteredTaskWorker, SQLiteTaskQueue
@@ -125,12 +128,14 @@ def search_task(payload: object, task_id: str) -> dict:
             "evaluations": result.evaluations, "stopping_reason": result.stopping_reason}
 
 
-def run_registered(path: str, *, cycles: int, interval_seconds: float, lease_seconds: float = 300) -> None:
+def run_registered(path: str, *, cycles: int, interval_seconds: float, lease_seconds: float = 300,
+                   postgres_dsn: str | None = None, namespace: str = "qes_queue") -> None:
     """Drain a durable local queue with registered trusted handlers and SIGTERM support."""
     if cycles < 0 or not np.isfinite(interval_seconds) or interval_seconds < 0:
         raise ValueError("invalid queue polling configuration")
-    queue = SQLiteTaskQueue(path)
-    worker = RegisteredTaskWorker(queue, {"qes.search": search_task}, owner=f"worker-{os.getpid()}")
+    queue = PostgresTaskQueue(postgres_dsn, namespace=namespace) if postgres_dsn else SQLiteTaskQueue(path)
+    worker = RegisteredTaskWorker(queue, {"qes.search": search_task},
+                                  owner=f"{socket.gethostname()}-{os.getpid()}-{uuid4().hex}")
     stop = threading.Event()
     previous_handlers = {}
     if threading.current_thread() is threading.main_thread():
@@ -185,10 +190,14 @@ def main() -> None:
     parser.add_argument("--task-queue", default=os.environ.get("QES_TASK_QUEUE"),
                         help="Durable local SQLite task queue; otherwise runs legacy demo jobs")
     parser.add_argument("--lease-seconds", type=float, default=300)
+    parser.add_argument("--postgres-dsn", default=os.environ.get("QES_POSTGRES_DSN"))
+    parser.add_argument("--queue-namespace", default="qes_queue")
     args = parser.parse_args()
-    if args.task_queue:
-        run_registered(args.task_queue, cycles=args.cycles, interval_seconds=args.interval,
-                       lease_seconds=args.lease_seconds)
+    if args.postgres_dsn and args.task_queue:
+        parser.error("select either PostgreSQL or SQLite task intake")
+    if args.task_queue or args.postgres_dsn:
+        run_registered(args.task_queue or "", cycles=args.cycles, interval_seconds=args.interval,
+                       lease_seconds=args.lease_seconds, postgres_dsn=args.postgres_dsn, namespace=args.queue_namespace)
     else:
         run(worker_count=args.worker_count, cycles=args.cycles, interval_seconds=args.interval)
 

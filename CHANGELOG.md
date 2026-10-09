@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-09
+
+- Add PostgreSQL-authoritative durable task coordination for independent network
+  workers: atomic SKIP LOCKED claims, database-time leases, UUID fencing, bounded
+  intake and retry limits, durable submission deduplication and queue metrics.
+- Add PostgreSQL intake to registered workers and health monitoring, globally
+  unique worker identities, bounded transport failure detection and fail-closed
+  database outage behavior. Workers need no shared local filesystem.
+- Gate releases on separate networked containers, worker network partition/rejoin,
+  stale-write fencing, host-clock skew, capacity races, database restart and backup
+  restoration. Delivery remains at least once with task-ID idempotent effects.
+- Peer election, arbitrary distributed callbacks and GPU/advanced quantum APIs
+  remain experimental; PostgreSQL service HA/replication is operator-managed.
+
+
 ## [2.1.0] - 2026-10-09
 
 - Validate Redis 7 and PostgreSQL 16 result adapters with real services, separate

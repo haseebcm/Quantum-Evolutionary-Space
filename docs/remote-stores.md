@@ -1,8 +1,8 @@
 # Redis and PostgreSQL result stores — 2.1.0
 
 The supported adapters share **job results**, not durable task intake or
-multi-host worker claims. The registered durable worker still uses the local
-SQLite queue. Result-store promotion does not certify multi-host orchestration,
+multi-host worker claims. Registered workers support local SQLite or the separately validated
+[PostgreSQL task queue](multi-host-coordination.md). Result-store promotion does not certify multi-host orchestration,
 consensus, GPUs or the advanced quantum API.
 
 Install `pip install 'qes[redis,postgres]'` from the 2.1.0 distribution. Supply

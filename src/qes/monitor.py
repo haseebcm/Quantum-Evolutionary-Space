@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -14,10 +15,11 @@ from typing import Any
 
 import numpy as np
 
+from qes.postgres_queue import PostgresTaskQueue
 from qes.task_queue import SQLiteTaskQueue
 
 
-def health_report(queue: SQLiteTaskQueue, *, max_queued_age: float = 60,
+def health_report(queue: SQLiteTaskQueue | PostgresTaskQueue, *, max_queued_age: float = 60,
                   worker_timeout: float = 60, capacity_warning: float = 0.9,
                   min_free_disk_bytes: int = 104857600, require_worker: bool = False) -> dict[str, Any]:
     if not np.isfinite(max_queued_age) or max_queued_age < 0:
@@ -27,9 +29,10 @@ def health_report(queue: SQLiteTaskQueue, *, max_queued_age: float = 60,
     if not isinstance(min_free_disk_bytes, int) or min_free_disk_bytes < 0:
         raise ValueError("min_free_disk_bytes must be nonnegative")
     snapshot = queue.operational_snapshot(worker_timeout=worker_timeout)
-    snapshot["disk_free_bytes"] = shutil.disk_usage(queue.path.parent).free
-    snapshot["database_bytes"] = sum(path.stat().st_size for path in (
-        queue.path, Path(str(queue.path)+"-wal"), Path(str(queue.path)+"-shm")) if path.exists())
+    if isinstance(queue, SQLiteTaskQueue):
+        snapshot["disk_free_bytes"] = shutil.disk_usage(queue.path.parent).free
+        snapshot["database_bytes"] = sum(path.stat().st_size for path in (
+            queue.path, Path(str(queue.path)+"-wal"), Path(str(queue.path)+"-shm")) if path.exists())
     alerts = []
     if snapshot["retained_records"] >= snapshot["record_capacity"] * capacity_warning:
         alerts.append("queue_capacity")
@@ -42,7 +45,7 @@ def health_report(queue: SQLiteTaskQueue, *, max_queued_age: float = 60,
     pending = snapshot["counts"]["queued"] + snapshot["counts"]["running"]
     if (require_worker or pending) and snapshot["live_workers"] == 0:
         alerts.append("no_live_workers")
-    if snapshot["disk_free_bytes"] < min_free_disk_bytes:
+    if "disk_free_bytes" in snapshot and snapshot["disk_free_bytes"] < min_free_disk_bytes:
         alerts.append("disk_space")
     return {"healthy": not alerts, "alerts": alerts, "metrics": snapshot}
 
@@ -63,7 +66,9 @@ def prometheus_text(report: dict[str, Any]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect QES local queue health; exit 1 on alerts, 2 on errors")
-    parser.add_argument("--task-queue", required=True)
+    parser.add_argument("--task-queue")
+    parser.add_argument("--postgres-dsn", default=os.environ.get("QES_POSTGRES_DSN"))
+    parser.add_argument("--queue-namespace", default="qes_queue")
     parser.add_argument("--format", choices=("json", "prometheus"), default="json")
     parser.add_argument("--max-queued-age", type=float, default=60)
     parser.add_argument("--worker-timeout", type=float, default=60)
@@ -71,10 +76,13 @@ def main() -> None:
     parser.add_argument("--min-free-disk-bytes", type=int, default=104857600)
     parser.add_argument("--require-worker", action="store_true")
     args = parser.parse_args()
-    if not Path(args.task_queue).is_file():
+    if bool(args.task_queue) == bool(args.postgres_dsn):
+        parser.error("select exactly one SQLite or PostgreSQL queue")
+    if args.task_queue and not Path(args.task_queue).is_file():
         parser.error("queue file does not exist")
     try:
-        queue = SQLiteTaskQueue(args.task_queue, max_records=args.max_records)
+        queue = (PostgresTaskQueue(args.postgres_dsn, namespace=args.queue_namespace, max_records=args.max_records)
+                 if args.postgres_dsn else SQLiteTaskQueue(args.task_queue, max_records=args.max_records))
         try:
             report = health_report(queue, max_queued_age=args.max_queued_age,
                                    worker_timeout=args.worker_timeout,

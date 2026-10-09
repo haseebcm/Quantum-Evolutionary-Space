@@ -7,6 +7,23 @@ on:
     branches: [main]
 
 jobs:
+  network-coordination:
+    name: Network worker coordination and fencing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[postgres]"
+      - run: docker build -t qes-network-workers .
+      - run: python benchmarks/validate_coordination.py --docker-image qes-network-workers --json coordination.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coordination-${{ github.run_id }}
+          path: coordination.json
+
   remote-stores:
     name: Real Redis and PostgreSQL recovery
     runs-on: ubuntu-latest

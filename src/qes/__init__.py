@@ -307,6 +307,7 @@ from qes.parallel_fabric import (
 )
 from qes.patterns import PatternMemory
 from qes.permission import AdaptivePermission, GenesisPermission, PermissionResult
+from qes.postgres_queue import PostgresTaskQueue
 from qes.qsee import BIG11, QEL, QSEE11L, AcrosV12BIESync, SyncResult
 from qes.real_distributed import (
     Coordinator as RealDistributedCoordinator,
@@ -451,6 +452,7 @@ from qes.world import World
 from qes.x_engine import AcrosV12BIE, AcrosV13, ApexI, GeoM, XEnginePipelineResult, x_engine_pipeline
 
 __all__ = [
+    "PostgresTaskQueue",
     "ExecutionBudget",
     "ExecutionStopped",
     "NoFeasibleSolutionError",

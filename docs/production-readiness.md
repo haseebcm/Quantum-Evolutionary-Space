@@ -1,6 +1,6 @@
 # Correctness fixes, compatibility and supported scope
 
-Version 2.1.0 hardens the trusted classical SDK and single-host task
+Version 2.2.0 hardens the trusted classical SDK and single-host task
 worker. It includes reproducible regressions, data-only durable intake, execution
 budgets, local RPC authorization, resource limits and a deployment runbook.
 GPU, multi-host consensus and advanced quantum APIs remain
@@ -113,7 +113,7 @@ many evolution/synchronization primitives still need independent contract tests.
   complete authenticated storage or adversarial-input isolation system.
 
 These changes need compatibility review before publishing a release. The
-single-source version is `2.1.0`, reflecting the serialization and validation
+single-source version is `2.2.0`, reflecting the serialization and validation
 compatibility changes. The release is gated on the CI matrix, container operations and installed-wheel
 validation.
 
@@ -157,17 +157,19 @@ implemented work does not satisfy the entire acceptance section.
 | Q03 serialization | Implemented migration | Broader schema-depth/resource and application authentication requirements |
 | Q04 quantum tests | Partial | Independent tests across all exported primitives |
 | R01 storage retries | Implemented | Crash-safe application idempotency for external effects |
-| R02 durable intake | Local SQLite queue, atomic leases, fencing and at-least-once contract implemented | Multi-host broker integration is experimental |
+| R02 durable intake | Local SQLite queue, atomic leases, fencing and at-least-once contract implemented | PostgreSQL-authoritative network task intake is supported |
 | R03 retention/limits | Bounded intake, payloads, rooms, histories, inboxes, events and RPC connections | Operator disk/container quotas and retention scheduling |
 | R04 shutdown/telemetry | Registered worker SIGTERM, deadline, result metadata and recovery tested | JSON/Prometheus metrics and local alerts implemented; destination routing belongs to deployment |
 | R05 durable stores | PostgreSQL identifier validation/transaction locking; queue schema and backup restore tested | Redis 7 / PostgreSQL 16 concurrency, outages and backup restore gated in CI |
 | S01 dispatch authorization | Local RPC signed-token verification, method scopes and supplied tenant checks implemented | TLS gateway, key rotation, application object authorization |
 | S02 execution isolation | Loopback network binding and bounded concurrency; data-only registered worker | OS isolation for untrusted callbacks is outside supported scope |
-| S03 leadership/retries | Local queue fencing and bounded process-local RPC deduplication | Multi-host consensus and partition safety remain experimental |
-| P01 packaging/version | Typed installed wheel and 2.1.0 release implemented | Passing hosted CI matrix and release approval |
+| S03 leadership/retries | Local queue fencing and bounded process-local RPC deduplication | PostgreSQL task fencing is CI-gated; peer-election consensus remains experimental |
+| P01 packaging/version | Typed installed wheel and 2.2.0 release implemented | Passing hosted CI matrix and release approval |
 | P02 CI semantics | Partial | Feature-specific coverage gates and actual integration jobs |
 | P03 contracts/docs | Supported core/worker contract and deployment/recovery runbook implemented | Experimental APIs need independent promotion evidence |
 
 Unimplemented items must not be described as completed production guarantees.
 
 Redis/PostgreSQL result-store promotion is scoped in [remote-stores.md](remote-stores.md).
+
+Current network-coordination scope and evidence: [multi-host-coordination.md](multi-host-coordination.md).

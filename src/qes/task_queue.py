@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import numpy as np
@@ -251,6 +251,12 @@ class SQLiteTaskQueue:
             self._conn.close()
 
 
+class TaskQueue(Protocol):
+    def claim(self, owner: str, *, lease_seconds: float = 30) -> TaskLease | None: ...
+    def complete(self, lease: TaskLease, result: Any) -> None: ...
+    def fail(self, lease: TaskLease, error: str, *, retry: bool = True) -> None: ...
+
+
 class RegisteredTaskWorker:
     """Trusted task dispatch; handlers receive payload and stable operation ID.
 
@@ -259,7 +265,7 @@ class RegisteredTaskWorker:
     Callers renew leases for long-running work or choose an adequate lease size.
     """
 
-    def __init__(self, queue: SQLiteTaskQueue, handlers: dict[str, Callable[[Any, str], Any]], *, owner: str):
+    def __init__(self, queue: TaskQueue, handlers: dict[str, Callable[[Any, str], Any]], *, owner: str):
         if not handlers or any(not callable(handler) for handler in handlers.values()):
             raise ValueError("handlers must be a nonempty registered callable mapping")
         self.queue = queue
