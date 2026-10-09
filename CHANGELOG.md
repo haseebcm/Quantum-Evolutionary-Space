@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bound default Redis socket/connect and PostgreSQL connection/statement waits.
 - Reconnect owned PostgreSQL connections on the next operation after disconnect;
   retain caller control of injected connections and surface ambiguous write errors.
+- Correct PostgreSQL scalar JSON string round-trips by selecting JSONB as text.
 - Add Redis close lifecycle, byte-key decoding, finite JSON validation and CI
   promotion gates. Failed persistence never reruns a successful handler.
 - Promote these result-store adapters only; task claiming remains the local

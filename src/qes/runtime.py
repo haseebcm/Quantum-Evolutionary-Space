@@ -350,7 +350,7 @@ class PostgresRuntimeStore(RuntimeStore):
 
     def get(self, key: str, default: Any = None) -> Any:
         with self._transaction() as cursor:
-            cursor.execute(f"SELECT payload FROM {self._table} WHERE job_id = %s", (key,))
+            cursor.execute(f"SELECT payload::text FROM {self._table} WHERE job_id = %s", (key,))
             row = cursor.fetchone()
         if row is None:
             return default
@@ -361,7 +361,7 @@ class PostgresRuntimeStore(RuntimeStore):
 
     def snapshot(self) -> dict[str, Any]:
         with self._transaction() as cursor:
-            cursor.execute(f"SELECT job_id, payload FROM {self._table} ORDER BY job_id")
+            cursor.execute(f"SELECT job_id, payload::text FROM {self._table} ORDER BY job_id")
             rows = cursor.fetchall()
         data = {}
         for job_id, payload in rows:

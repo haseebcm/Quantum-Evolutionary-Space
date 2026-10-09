@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing
+import socket
 import subprocess
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -52,22 +53,27 @@ def ready(kind: str, address: str) -> None:
     raise AssertionError(f"{kind} service did not become ready")
 
 
+def available_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
 def validate(kind: str) -> dict:
     name = "qes-store-"+uuid4().hex[:12]
     volume = name+"-data"
     docker("volume", "create", volume)
+    port = str(available_port())
     try:
         if kind == "redis":
-            docker("run", "-d", "--name", name, "-p", "127.0.0.1::6379", "-v", volume+":/data",
+            docker("run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:6379", "-v", volume+":/data",
                    "redis:7-alpine", "redis-server", "--appendonly", "yes", "--appendfsync", "always")
-            port = docker("port", name, "6379/tcp").rsplit(":", 1)[1]
             address = f"redis://127.0.0.1:{port}/0"
         else:
             password = uuid4().hex  # Disposable fixture credential; never a production account.
-            docker("run", "-d", "--name", name, "-p", "127.0.0.1::5432", "-v",
+            docker("run", "-d", "--name", name, "-p", f"127.0.0.1:{port}:5432", "-v",
                    volume+":/var/lib/postgresql/data", "-e", "POSTGRES_PASSWORD="+password,
                    "postgres:16-alpine")
-            port = docker("port", name, "5432/tcp").rsplit(":", 1)[1]
             address = f"postgresql://postgres:{password}@127.0.0.1:{port}/postgres"
         ready(kind, address)
         store = store_for(kind, address)
@@ -79,9 +85,13 @@ def validate(kind: str) -> dict:
             with ThreadPoolExecutor(4) as pool:
                 list(pool.map(lambda i: store.put(f"thread-{i}", {"i": i}), range(40)))
             assert len(store.snapshot()) == 100
+            store.put("scalar", "plain text")
+            store.put("json-looking-string", '{"looks":"json"}')
+            assert store.get("scalar") == "plain text"
+            assert store.snapshot()["json-looking-string"] == '{"looks":"json"}'
             store.put("stable", {"committed": True})
             store.put("stable", {"committed": True})
-            assert len(store.snapshot()) == 101
+            assert len(store.snapshot()) == 103
             report["process_and_thread_concurrency"] = "passed"
             docker("kill", name)
             started = time.monotonic()
@@ -106,7 +116,7 @@ def validate(kind: str) -> dict:
             ready(kind, address)
             assert store.get("stable") == {"committed": True}
             assert store.get("outage") is None
-            assert len(store.snapshot()) == 101
+            assert len(store.snapshot()) == 103
             store.put(job.job_id, job.result)
             assert store.get(job.job_id) == job.result and effects == [1]
             report["forced_restart_durability_and_reconnect"] = "passed"

@@ -46,7 +46,7 @@ class _FakeCursor:
         return False
 
     def execute(self, sql, params=None):
-        sql_norm = " ".join(sql.split())
+        sql_norm = " ".join(sql.split()).replace("payload::text", "payload")
         if sql_norm.startswith("CREATE TABLE"):
             return
         if sql_norm.startswith("INSERT INTO"):
