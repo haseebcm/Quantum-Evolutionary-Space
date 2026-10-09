@@ -1,0 +1,248 @@
+[
+  {
+    "example": "examples/adversarial_reality_demo.py",
+    "exit": 0,
+    "seconds": 0.7,
+    "error": ""
+  },
+  {
+    "example": "examples/basic_run.py",
+    "exit": 0,
+    "seconds": 0.86,
+    "error": ""
+  },
+  {
+    "example": "examples/causal_reality_engine_demo.py",
+    "exit": 0,
+    "seconds": 0.83,
+    "error": ""
+  },
+  {
+    "example": "examples/closed_loop_cycle.py",
+    "exit": 0,
+    "seconds": 0.91,
+    "error": ""
+  },
+  {
+    "example": "examples/control_policy_search.py",
+    "exit": 0,
+    "seconds": 0.83,
+    "error": ""
+  },
+  {
+    "example": "examples/design_space_search.py",
+    "exit": 0,
+    "seconds": 0.72,
+    "error": ""
+  },
+  {
+    "example": "examples/digital_twin_loop_demo.py",
+    "exit": 0,
+    "seconds": 0.89,
+    "error": ""
+  },
+  {
+    "example": "examples/distributed_qes_demo.py",
+    "exit": 0,
+    "seconds": 0.8,
+    "error": ""
+  },
+  {
+    "example": "examples/distributed_runtime_demo.py",
+    "exit": 0,
+    "seconds": 0.67,
+    "error": ""
+  },
+  {
+    "example": "examples/domain_packs_demo.py",
+    "exit": 0,
+    "seconds": 1.34,
+    "error": ""
+  },
+  {
+    "example": "examples/durable_queue_demo.py",
+    "exit": 0,
+    "seconds": 0.66,
+    "error": ""
+  },
+  {
+    "example": "examples/equation_forge_2_demo.py",
+    "exit": 0,
+    "seconds": 5.44,
+    "error": ""
+  },
+  {
+    "example": "examples/formal_verification_demo.py",
+    "exit": 0,
+    "seconds": 0.66,
+    "error": ""
+  },
+  {
+    "example": "examples/full_stack_integration.py",
+    "exit": 0,
+    "seconds": 0.61,
+    "error": ""
+  },
+  {
+    "example": "examples/full_stack_integration_part2.py",
+    "exit": 0,
+    "seconds": 0.79,
+    "error": ""
+  },
+  {
+    "example": "examples/genesis_pipeline_demo.py",
+    "exit": 0,
+    "seconds": 0.63,
+    "error": ""
+  },
+  {
+    "example": "examples/gpu_compute_demo.py",
+    "exit": 0,
+    "seconds": 0.63,
+    "error": ""
+  },
+  {
+    "example": "examples/h11x_closure_demo.py",
+    "exit": 0,
+    "seconds": 0.57,
+    "error": ""
+  },
+  {
+    "example": "examples/information_gain_demo.py",
+    "exit": 0,
+    "seconds": 0.62,
+    "error": ""
+  },
+  {
+    "example": "examples/intelligent_universe.py",
+    "exit": 0,
+    "seconds": 0.6,
+    "error": ""
+  },
+  {
+    "example": "examples/knowledge_graph_demo.py",
+    "exit": 0,
+    "seconds": 0.59,
+    "error": ""
+  },
+  {
+    "example": "examples/meta_learning_demo.py",
+    "exit": 0,
+    "seconds": 0.67,
+    "error": ""
+  },
+  {
+    "example": "examples/multi_agent_evolution_demo.py",
+    "exit": 0,
+    "seconds": 0.65,
+    "error": ""
+  },
+  {
+    "example": "examples/observatory_demo.py",
+    "exit": 0,
+    "seconds": 0.71,
+    "error": ""
+  },
+  {
+    "example": "examples/production_pipeline.py",
+    "exit": 0,
+    "seconds": 0.65,
+    "error": ""
+  },
+  {
+    "example": "examples/qes_bench_demo.py",
+    "exit": 0,
+    "seconds": 1.51,
+    "error": ""
+  },
+  {
+    "example": "examples/qsee_11l_demo.py",
+    "exit": 0,
+    "seconds": 0.59,
+    "error": ""
+  },
+  {
+    "example": "examples/real_distributed_demo.py",
+    "exit": 0,
+    "seconds": 1.7,
+    "error": ""
+  },
+  {
+    "example": "examples/reality_communication_demo.py",
+    "exit": 0,
+    "seconds": 0.58,
+    "error": ""
+  },
+  {
+    "example": "examples/reality_marketplace_demo.py",
+    "exit": 0,
+    "seconds": 0.62,
+    "error": ""
+  },
+  {
+    "example": "examples/reality_operators_demo.py",
+    "exit": 0,
+    "seconds": 0.6,
+    "error": ""
+  },
+  {
+    "example": "examples/reproducibility_demo.py",
+    "exit": 0,
+    "seconds": 0.63,
+    "error": ""
+  },
+  {
+    "example": "examples/resource_allocation.py",
+    "exit": 0,
+    "seconds": 0.58,
+    "error": ""
+  },
+  {
+    "example": "examples/rpc_fault_tolerance_demo.py",
+    "exit": 0,
+    "seconds": 1.16,
+    "error": ""
+  },
+  {
+    "example": "examples/runtime_scheduler_demo.py",
+    "exit": 0,
+    "seconds": 0.65,
+    "error": ""
+  },
+  {
+    "example": "examples/scientific_inference.py",
+    "exit": 0,
+    "seconds": 0.69,
+    "error": ""
+  },
+  {
+    "example": "examples/scipy_baseline_benchmark.py",
+    "exit": 0,
+    "seconds": 3.36,
+    "error": ""
+  },
+  {
+    "example": "examples/sdk_demo.py",
+    "exit": 0,
+    "seconds": 0.8,
+    "error": ""
+  },
+  {
+    "example": "examples/security_demo.py",
+    "exit": 0,
+    "seconds": 0.6,
+    "error": ""
+  },
+  {
+    "example": "examples/self_improvement_demo.py",
+    "exit": 0,
+    "seconds": 0.59,
+    "error": ""
+  },
+  {
+    "example": "examples/storage_backend_demo.py",
+    "exit": 0,
+    "seconds": 0.6,
+    "error": ""
+  }
+]

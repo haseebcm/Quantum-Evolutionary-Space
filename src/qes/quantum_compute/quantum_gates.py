@@ -228,8 +228,8 @@ def expand_two_qubit_gate(gate: np.ndarray, control: int, target: int, num_qubit
     if num_qubits < 2:
         raise ValueError("num_qubits must be >= 2")
 
-    lo, hi = min(control, target), max(control, target)
-    if hi == lo + 1:
+    lo = min(control, target)
+    if (control, target) == (lo, lo + 1):
         # adjacent — simple expansion
         return _expand_adjacent_two_qubit_gate(gate, lo, num_qubits)
 
