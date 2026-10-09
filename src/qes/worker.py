@@ -6,9 +6,11 @@ Without that option the entrypoint retains its legacy demonstration workload.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
@@ -24,6 +26,15 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s qes.worker: %(message)s",
 )
 logger = logging.getLogger("qes.worker")
+
+
+def _peak_rss_kib() -> int:
+    if sys.platform == "win32":
+        return 0  # Unknown on platforms without resource.getrusage.
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(peak / 1024 if sys.platform == "darwin" else peak)
 
 
 def _state_dir() -> Path:
@@ -128,15 +139,32 @@ def run_registered(path: str, *, cycles: int, interval_seconds: float, lease_sec
             signal.signal(signum, lambda _signum, _frame: stop.set())
     try:
         cycle = 0
+        logger.info(json.dumps({"event": "worker_started", "owner": worker.owner}))
         while not stop.is_set() and (cycles == 0 or cycle < cycles):
+            queue.heartbeat(worker.owner, status="running", peak_rss_kib=_peak_rss_kib())
+            started = time.monotonic()
             worked = worker.run_one(lease_seconds=lease_seconds)
+            queue.heartbeat(worker.owner, peak_rss_kib=_peak_rss_kib())
+            if worked:
+                logger.info(json.dumps({"event": "task_processed", "owner": worker.owner,
+                                        "duration_seconds": time.monotonic()-started}))
             cycle += 1
             if not worked and not stop.is_set() and (cycles == 0 or cycle < cycles):
-                stop.wait(interval_seconds)
+                # Keep liveness current even when operators choose long idle polls.
+                remaining = interval_seconds
+                while remaining > 0 and not stop.is_set():
+                    wait = min(remaining, 10.0)
+                    stop.wait(wait)
+                    remaining -= wait
+                    queue.heartbeat(worker.owner, peak_rss_kib=_peak_rss_kib())
     finally:
-        queue.close()
-        for signum, previous in previous_handlers.items():
-            signal.signal(signum, previous)
+        try:
+            queue.heartbeat(worker.owner, status="stopped", peak_rss_kib=_peak_rss_kib())
+            logger.info(json.dumps({"event": "worker_stopped", "owner": worker.owner}))
+        finally:
+            queue.close()
+            for signum, previous in previous_handlers.items():
+                signal.signal(signum, previous)
 
 
 def main() -> None:

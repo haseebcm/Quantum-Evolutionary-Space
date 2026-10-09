@@ -1,0 +1,40 @@
+{
+  "qes_version": "2.0.0",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+  "python": "3.12.14",
+  "numpy": "2.3.5",
+  "executor": "native",
+  "task_count": 60,
+  "workers": 2,
+  "load": {
+    "elapsed_seconds": 0.7789067220001016,
+    "tasks_per_second": 77.03104660071502,
+    "latency_p50_seconds": 0.6894222497940063,
+    "latency_p95_seconds": 0.7603186964988708,
+    "queue_bytes_after_load": 2908536
+  },
+  "worker_peak_rss_kib": 65920,
+  "worker_cpu_seconds": 3.195676,
+  "graceful_shutdown": "passed",
+  "crash_alert": [
+    "expired_leases"
+  ],
+  "kill_and_restart": "passed",
+  "failure_attempt_cap_and_alert": "passed",
+  "backup_restore": "passed",
+  "final_metrics": {
+    "counts": {
+      "queued": 0,
+      "running": 0,
+      "completed": 61,
+      "failed": 1
+    },
+    "retained_records": 62,
+    "record_capacity": 10000,
+    "oldest_queued_seconds": 0.0,
+    "expired_leases": 0,
+    "retry_attempts": 3,
+    "live_workers": 1,
+    "worker_peak_rss_kib": 66424
+  }
+}

@@ -1,5 +1,12 @@
 # H¹¹ Quantum Evolutionary Space (QES)
 
+**Version 2.0.0 supported scope:** trusted classical SDK computation and bounded
+registered workers on one host with local SQLite state. Includes durable intake,
+recovery, operational monitoring and alerts. GPU, remote stores, multi-host
+coordination and advanced quantum APIs remain experimental. See the
+[deployment contract](docs/deployment.md) and [validation evidence](docs/readiness-validation.md).
+
+
 [![CI](https://github.com/haseebcm/Quantum-Evolutionary-Space/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/haseebcm/Quantum-Evolutionary-Space/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](pyproject.toml)

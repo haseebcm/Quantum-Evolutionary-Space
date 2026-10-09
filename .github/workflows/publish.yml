@@ -12,6 +12,24 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  single-host-operations:
+    name: Single-host load and container recovery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - run: python benchmarks/validate_single_host.py --tasks 40 --json native-operations.json
+      - run: docker build -t qes-acceptance .
+      - run: python benchmarks/validate_single_host.py --docker-image qes-acceptance --tasks 40 --json container-operations.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: single-host-operations-${{ github.run_id }}
+          path: "*-operations.json"
+
   validate:
     name: Release checks (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -39,7 +57,7 @@ jobs:
 
   build:
     name: Build distribution
-    needs: validate
+    needs: [validate, single-host-operations]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

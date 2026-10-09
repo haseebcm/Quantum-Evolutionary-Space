@@ -17,5 +17,7 @@ ENV QES_RUNTIME_STATE_DIR=/app/state
 RUN useradd --create-home --uid 10001 qes && mkdir -p "$QES_RUNTIME_STATE_DIR" && chown qes:qes "$QES_RUNTIME_STATE_DIR"
 USER qes
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 CMD qes-status --task-queue /app/state/tasks.sqlite --require-worker || exit 1
+
 ENTRYPOINT ["python", "-m", "qes.worker"]
 CMD ["--task-queue", "/app/state/tasks.sqlite"]

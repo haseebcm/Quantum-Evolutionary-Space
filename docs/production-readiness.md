@@ -1,10 +1,10 @@
 # Correctness fixes, compatibility and supported scope
 
-This release candidate hardens the trusted classical SDK and single-host task
+Version 2.0.0 hardens the trusted classical SDK and single-host task
 worker. It includes reproducible regressions, data-only durable intake, execution
 budgets, local RPC authorization, resource limits and a deployment runbook.
 GPU, external stores, multi-host consensus and advanced quantum APIs remain
-experimental. Release tagging requires passing the CI matrix and review.
+experimental. The supported operating envelope and promotion gates are in the deployment guide.
 
 ## Result and metric contracts
 
@@ -113,9 +113,9 @@ many evolution/synchronization primitives still need independent contract tests.
   complete authenticated storage or adversarial-input isolation system.
 
 These changes need compatibility review before publishing a release. The
-single-source version is `2.0.0rc1`, reflecting the serialization and validation
-compatibility changes. This branch does not create a release tag or publish a
-package.
+single-source version is `2.0.0`, reflecting the serialization and validation
+compatibility changes. The release is gated on the CI matrix, container operations and installed-wheel
+validation.
 
 ## Validation gates
 
@@ -159,12 +159,12 @@ implemented work does not satisfy the entire acceptance section.
 | R01 storage retries | Implemented | Crash-safe application idempotency for external effects |
 | R02 durable intake | Local SQLite queue, atomic leases, fencing and at-least-once contract implemented | Multi-host broker integration is experimental |
 | R03 retention/limits | Bounded intake, payloads, rooms, histories, inboxes, events and RPC connections | Operator disk/container quotas and retention scheduling |
-| R04 shutdown/telemetry | Registered worker SIGTERM, deadline, result metadata and recovery tested | Hosted metrics/alert routing belongs to deployment |
+| R04 shutdown/telemetry | Registered worker SIGTERM, deadline, result metadata and recovery tested | JSON/Prometheus metrics and local alerts implemented; destination routing belongs to deployment |
 | R05 durable stores | PostgreSQL identifier validation/transaction locking; queue schema and backup restore tested | Actual remote Postgres/Redis integration validation |
 | S01 dispatch authorization | Local RPC signed-token verification, method scopes and supplied tenant checks implemented | TLS gateway, key rotation, application object authorization |
 | S02 execution isolation | Loopback network binding and bounded concurrency; data-only registered worker | OS isolation for untrusted callbacks is outside supported scope |
 | S03 leadership/retries | Local queue fencing and bounded process-local RPC deduplication | Multi-host consensus and partition safety remain experimental |
-| P01 packaging/version | Typed installed wheel and 2.0.0rc1 release candidate implemented | Passing hosted CI matrix and release approval |
+| P01 packaging/version | Typed installed wheel and 2.0.0 release implemented | Passing hosted CI matrix and release approval |
 | P02 CI semantics | Partial | Feature-specific coverage gates and actual integration jobs |
 | P03 contracts/docs | Supported core/worker contract and deployment/recovery runbook implemented | Experimental APIs need independent promotion evidence |
 

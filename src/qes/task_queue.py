@@ -68,10 +68,9 @@ class SQLiteTaskQueue:
         self._conn = sqlite3.connect(str(self.path), timeout=10, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1):
+        if version not in (0, 1, 2):
             self._conn.close()
             raise ValueError("unsupported durable queue schema version")
-        self._conn.execute("PRAGMA user_version=1")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("""CREATE TABLE IF NOT EXISTS tasks (
@@ -82,6 +81,10 @@ class SQLiteTaskQueue:
             max_attempts INTEGER NOT NULL, result TEXT, error TEXT,
             UNIQUE(tenant_id, idempotency_key))""")
         self._conn.execute("CREATE INDEX IF NOT EXISTS tasks_claim ON tasks(status, priority, created_at)")
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS workers (
+            owner TEXT PRIMARY KEY, last_seen REAL NOT NULL, status TEXT NOT NULL,
+            peak_rss_kib INTEGER NOT NULL DEFAULT 0)""")
+        self._conn.execute("PRAGMA user_version=2")
         self._conn.commit()
 
     @contextmanager
@@ -195,6 +198,44 @@ class SQLiteTaskQueue:
         with self._transaction() as conn:
             cursor = conn.execute("DELETE FROM tasks WHERE status IN ('completed','failed') AND updated_at<?", (before,))
             return cursor.rowcount
+
+    def heartbeat(self, owner: str, *, status: str = "idle", peak_rss_kib: int = 0) -> None:
+        """Record worker liveness; old terminal identities are retained for one day."""
+        _identifier(owner, "owner")
+        if status not in {"idle", "running", "stopped"}:
+            raise ValueError("invalid worker status")
+        if not isinstance(peak_rss_kib, int) or peak_rss_kib < 0:
+            raise ValueError("peak_rss_kib must be nonnegative")
+        now = time.time()
+        with self._transaction() as conn:
+            conn.execute("DELETE FROM workers WHERE last_seen<?", (now - 86400,))
+            if conn.execute("SELECT COUNT(*) FROM workers").fetchone()[0] >= 1000 and (
+                conn.execute("SELECT 1 FROM workers WHERE owner=?", (owner,)).fetchone() is None
+            ):
+                raise OverflowError("worker identity capacity exceeded")
+            conn.execute("""INSERT INTO workers VALUES(?,?,?,?) ON CONFLICT(owner) DO UPDATE
+                         SET last_seen=excluded.last_seen,status=excluded.status,
+                         peak_rss_kib=MAX(workers.peak_rss_kib,excluded.peak_rss_kib)""",
+                         (owner, now, status, peak_rss_kib))
+
+    def operational_snapshot(self, *, worker_timeout: float = 60) -> dict[str, Any]:
+        """Aggregate task/liveness metrics without exposing tenant payloads."""
+        _positive_seconds(worker_timeout)
+        now = time.time()
+        with self._transaction() as conn:
+            counts = {row[0]: row[1] for row in conn.execute("SELECT status,COUNT(*) FROM tasks GROUP BY status")}
+            oldest = conn.execute("SELECT MIN(created_at) FROM tasks WHERE status='queued'").fetchone()[0]
+            expired = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='running' AND expires_at<=?",
+                                   (now,)).fetchone()[0]
+            retries = conn.execute("SELECT COALESCE(SUM(MAX(attempts-1,0)),0) FROM tasks").fetchone()[0]
+            live = conn.execute("SELECT COUNT(*) FROM workers WHERE status!='stopped' AND last_seen>?",
+                                (now-worker_timeout,)).fetchone()[0]
+            peak = conn.execute("SELECT COALESCE(MAX(peak_rss_kib),0) FROM workers").fetchone()[0]
+        return {"counts": {key: counts.get(key, 0) for key in ("queued", "running", "completed", "failed")},
+                "retained_records": sum(counts.values()), "record_capacity": self.max_records,
+                "oldest_queued_seconds": 0.0 if oldest is None else max(0.0, now-oldest),
+                "expired_leases": expired, "retry_attempts": retries, "live_workers": live,
+                "worker_peak_rss_kib": peak}
 
     def backup(self, path: str | Path) -> None:
         """Create a consistent SQLite backup under the queue lock."""

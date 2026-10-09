@@ -42,6 +42,7 @@ dependencies = [
 
 [project.scripts]
 qes-worker = "qes.worker:main"
+qes-status = "qes.monitor:main"
 
 [project.urls]
 Homepage = "https://github.com/haseebcm/Quantum-Evolutionary-Space"

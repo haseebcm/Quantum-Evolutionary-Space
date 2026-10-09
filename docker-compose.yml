@@ -19,6 +19,12 @@ services:
     volumes:
       - qes-runtime-state:/app/state
     restart: unless-stopped
+    stop_grace_period: 60s
+    cpus: 1.0
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp
 
 volumes:
   qes-runtime-state:

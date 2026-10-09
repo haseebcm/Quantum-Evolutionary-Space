@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-09
+
+### Operations and supported release scope
+- Support the trusted classical SDK and bounded registered single-host worker.
+- Add durable SQLite intake, leases, stale-result fencing, bounded resources,
+  cooperative deadlines/cancellation, and stable IDs for idempotent handlers.
+- Add worker heartbeats, structured lifecycle/task logs, peak-memory metrics,
+  `qes-status` JSON/Prometheus export and actionable health alerts.
+- Add native/container load, SIGTERM/SIGKILL recovery, retry-cap, backup-restore
+  and crash-after-effect idempotency validation. Containers run non-root with
+  CPU/memory limits, a read-only root filesystem and persistent local state.
+- Advanced quantum, GPU, remote stores, multi-host coordination and arbitrary
+  untrusted callbacks remain outside the supported production scope.
+
+
 ### Correctness and compatibility changes
 - Return only certified admissible SDK winners; expose `SDKRunResult.status`.
   `optimize()` raises `NoFeasibleSolutionError` when no candidate is admitted.
