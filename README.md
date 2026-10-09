@@ -1,8 +1,9 @@
 # H¹¹ Quantum Evolutionary Space (QES)
 
-**Version 2.0.0 supported scope:** trusted classical SDK computation and bounded
+**Version 2.1.0 supported scope:** trusted classical SDK computation and bounded
 registered workers on one host with local SQLite state. Includes durable intake,
-recovery, operational monitoring and alerts. GPU, remote stores, multi-host
+recovery, operational monitoring and alerts. Redis 7 and PostgreSQL 16 result-store adapters additionally have
+[real-service validation](docs/remote-stores.md). GPU and multi-host
 coordination and advanced quantum APIs remain experimental. See the
 [deployment contract](docs/deployment.md) and [validation evidence](docs/readiness-validation.md).
 

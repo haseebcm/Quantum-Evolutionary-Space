@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-09
+
+- Validate Redis 7 and PostgreSQL 16 result adapters with real services, separate
+  processes and concurrent threads, forced outages/restarts and backup restores.
+- Bound default Redis socket/connect and PostgreSQL connection/statement waits.
+- Reconnect owned PostgreSQL connections on the next operation after disconnect;
+  retain caller control of injected connections and surface ambiguous write errors.
+- Add Redis close lifecycle, byte-key decoding, finite JSON validation and CI
+  promotion gates. Failed persistence never reruns a successful handler.
+- Promote these result-store adapters only; task claiming remains the local
+  SQLite queue. Multi-host task orchestration and consensus remain experimental.
+
+
 ## [2.0.0] - 2026-10-09
 
 ### Operations and supported release scope

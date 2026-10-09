@@ -9,6 +9,7 @@ committing to any single external infrastructure provider.
 from __future__ import annotations
 
 import hmac
+import importlib
 import itertools
 import json
 import re
@@ -22,13 +23,16 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+_redis_module: Any
+_psycopg2_module: Any
+
 try:  # pragma: no cover - exercised indirectly via optional-dependency tests
-    import redis as _redis_module
+    _redis_module = importlib.import_module("redis")
 except ImportError:  # pragma: no cover
     _redis_module = None
 
 try:  # pragma: no cover - exercised indirectly via optional-dependency tests
-    import psycopg2 as _psycopg2_module
+    _psycopg2_module = importlib.import_module("psycopg2")
 except ImportError:  # pragma: no cover
     _psycopg2_module = None
 
@@ -208,24 +212,34 @@ class RedisRuntimeStore(RuntimeStore):
         *,
         key_prefix: str = "qes:runtime:jobs",
         client: Any = None,
+        socket_timeout: float = 5,
     ):
+        if not isinstance(key_prefix, str) or not key_prefix or len(key_prefix) > 256:
+            raise ValueError("key_prefix must be a nonempty string of at most 256 characters")
+        if not 0 < socket_timeout <= 60:
+            raise ValueError("socket_timeout must lie in (0,60]")
+        self._closed = False
         if client is None:
             if _redis_module is None:
                 raise ImportError(
                     "RedisRuntimeStore requires the optional 'redis' package. "
                     "Install it with `pip install redis`."
                 )
-            client = _redis_module.Redis.from_url(url, decode_responses=True)
+            client = _redis_module.Redis.from_url(url, decode_responses=True,
+                                                 socket_timeout=socket_timeout,
+                                                 socket_connect_timeout=socket_timeout)
         self._client = client
         self._key_prefix = key_prefix
         super().__init__()
 
     def put(self, key: str, value: Any) -> Any:
-        self._client.hset(self._key_prefix, key, json.dumps(value, sort_keys=True))
+        self._check_open()
+        self._client.hset(self._key_prefix, key, json.dumps(value, sort_keys=True, allow_nan=False))
         self._data[key] = value
         return value
 
     def get(self, key: str, default: Any = None) -> Any:
+        self._check_open()
         raw = self._client.hget(self._key_prefix, key)
         if raw is None:
             return default
@@ -234,14 +248,27 @@ class RedisRuntimeStore(RuntimeStore):
         return value
 
     def snapshot(self) -> dict[str, Any]:
+        self._check_open()
         raw_items = self._client.hgetall(self._key_prefix) or {}
-        data = {key: json.loads(payload) for key, payload in raw_items.items()}
+        data = {key.decode("utf8") if isinstance(key, bytes) else key: json.loads(payload)
+                for key, payload in raw_items.items()}
         self._data = data
         return dict(data)
 
     def clear(self) -> None:
+        self._check_open()
         self._client.delete(self._key_prefix)
         self._data.clear()
+
+    def _check_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("Redis runtime store is closed")
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            if hasattr(self._client, "close"):
+                self._client.close()
 
 
 class PostgresRuntimeStore(RuntimeStore):
@@ -265,13 +292,17 @@ class PostgresRuntimeStore(RuntimeStore):
             raise ValueError("table must be a simple SQL identifier of at most 63 characters")
         self._table = table
         self._lock = threading.Lock()
+        self._dsn = dsn
+        self._owns_connection = connection is None
+        self._closed = False
         if connection is None:
             if _psycopg2_module is None:
                 raise ImportError(
                     "PostgresRuntimeStore requires the optional 'psycopg2' package. "
                     "Install it with `pip install psycopg2-binary`."
                 )
-            connection = _psycopg2_module.connect(dsn)
+            connection = _psycopg2_module.connect(dsn, connect_timeout=3,
+                                                options="-c statement_timeout=5000")
         self._conn = connection
         with self._transaction() as cursor:
             cursor.execute(
@@ -287,17 +318,25 @@ class PostgresRuntimeStore(RuntimeStore):
     @contextmanager
     def _transaction(self) -> Iterator[Any]:
         with self._lock:
+            if self._closed:
+                raise RuntimeError("Postgres runtime store is closed")
+            if self._owns_connection and getattr(self._conn, "closed", False):
+                self._conn = _psycopg2_module.connect(self._dsn, connect_timeout=3,
+                                                    options="-c statement_timeout=5000")
             try:
                 with self._conn.cursor() as cursor:
                     yield cursor
                 self._conn.commit()
             except Exception:
                 if hasattr(self._conn, "rollback"):
-                    self._conn.rollback()
+                    try:
+                        self._conn.rollback()
+                    except Exception:
+                        pass  # Preserve the original network/commit exception.
                 raise
 
     def put(self, key: str, value: Any) -> Any:
-        payload = json.dumps(value, sort_keys=True)
+        payload = json.dumps(value, sort_keys=True, allow_nan=False)
         with self._transaction() as cursor:
             cursor.execute(
                 f"""
@@ -337,7 +376,9 @@ class PostgresRuntimeStore(RuntimeStore):
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if not self._closed:
+                self._closed = True
+                self._conn.close()
 
 
 class RuntimeScheduler:

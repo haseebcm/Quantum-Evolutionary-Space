@@ -7,6 +7,22 @@ on:
     branches: [main]
 
 jobs:
+  remote-stores:
+    name: Real Redis and PostgreSQL recovery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[redis,postgres]"
+      - run: python benchmarks/validate_remote_stores.py --json remote-stores.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: remote-stores-${{ github.run_id }}
+          path: remote-stores.json
+
   single-host-operations:
     name: Single-host load and container recovery
     runs-on: ubuntu-latest

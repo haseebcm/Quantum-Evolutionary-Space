@@ -296,7 +296,7 @@ def test_postgres_runtime_store_connects_via_optional_dependency(monkeypatch):
 
     class _FakePsycopg2:
         @staticmethod
-        def connect(dsn):
+        def connect(dsn, **kwargs):
             assert dsn == "postgresql://example"
             return fake_conn
 
@@ -316,7 +316,7 @@ def test_redis_runtime_store_connects_via_optional_dependency(monkeypatch):
     class _FakeRedisModule:
         class Redis:
             @staticmethod
-            def from_url(url, decode_responses):
+            def from_url(url, decode_responses, **kwargs):
                 assert url == "redis://example"
                 assert decode_responses is True
                 return fake_client

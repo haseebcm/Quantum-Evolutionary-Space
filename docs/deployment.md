@@ -1,6 +1,6 @@
 # Trusted single-host deployment and recovery
 
-Version 2.0.0 supports trusted classical computation and bounded registered
+Version 2.1.0 supports trusted classical computation and bounded registered
 single-host tasks. This is a scoped production release; the experimental API
 families listed below are not promoted by the version number.
 
@@ -10,7 +10,8 @@ Use the classical `QESClient`/`optimize` APIs with finite bounded states and
 trusted callbacks. The container runs registered data-only `qes.search` tasks
 through `SQLiteTaskQueue`. Multiple worker processes can share one SQLite file
 on a local filesystem on the same host. Do not share it through a network mount.
-Advanced quantum, GPU, remote stores and multi-host leadership are experimental.
+Advanced quantum, GPU and multi-host leadership are experimental. Redis and
+PostgreSQL result adapters have separate [supported contracts](remote-stores.md).
 Container builds and remote integrations must be validated in your deployment.
 
 ## Submit and run
